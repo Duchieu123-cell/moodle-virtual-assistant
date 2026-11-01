@@ -1,0 +1,121 @@
+table_info = """
+user: store all information about a user
+- id: The unique identifier for the user.
+- auth: The authentication method used by the user.
+- confirmed: Indicates whether the user account has been confirmed.
+- policyagreed: Indicates whether the user has agreed to the policy.
+- deleted: Indicates whether the user account has been deleted.
+- suspended: Indicates whether the user account has been suspended.
+- mnethostid: The MNet host ID associated with the user.
+- username: The username of the user.
+- idnumber: An identification number associated with the user.
+- firstname: The first name of the user.
+- lastname: The last name of the user.
+- email: The email address of the user.
+- phone1: The first phone number of the user.
+- department: The department the user is associated with.
+- address: The address of the user.
+- city: The city of the user.
+- country: The country of the user.
+- firstaccess: The timestamp of the user's first access.
+- lastaccess: The timestamp of the user's last access.
+- lastlogin: The timestamp of the user's last login.
+- currentlogin: The timestamp of the user's current login.
+- description: Additional description or information about the user.
+- timecreated: The timestamp of when the user account was created.
+- lastnamephonetic: The phonetic representation of the user's last name.
+- firstnamephonetic: The phonetic representation of the user's first name.
+- middlename: The middle name of the user.
+- alternatename: An alternate name for the user.
+------
+course: store information about a course
+- id: The unique identifier for the course.
+- category: The category ID associated with the course.
+- fullname: The full name of the course.
+- shortname: The short name of the course.
+- idnumber: An identification number associated with the course.
+- summary: A summary or description of the course.
+- startdate: The start date of the course.
+- enddate: The end date of the course.
+- visible: Indicates whether the course is visible.
+- calendartype: The calendar type preferred for the course.
+- timecreated: The timestamp of when the course was created.
+- timemodified: The timestamp of when the course was last modified.
+- requested: Indicates whether the course has been requested.
+- enablecompletion: Indicates whether completion is enabled for the course.
+- completionnotify: Indicates whether completion notifications are enabled for the course.
+- originalcourseid: The original course ID associated with the course.
+------
+enrol: this is linked to user_enrolments and store information about a enrolment of any users. Combine data of this and user_enrolments can give answers about courses that user enroled. ("đăng ký khóa học", "học khóa học")
+- id: The unique identifier for the enrolment.
+- status: The status of the enrolment.
+- courseid: The ID of the course associated with the enrolment (link to table course: course.id).
+- name: The name of the enrolment.
+- enrolperiod: The enrolment period.
+- enrolstartdate: The start date of the enrolment.
+- roleid: The role ID associated with the enrolment.
+- timecreated: The timestamp of when the enrolment was created.
+- timemodified: The timestamp of when the enrolment was last modified.
+------
+user_enrolments: this is a mapping between user table and enrol and is used to define which enrolment belongs to a user.
+- id: The unique identifier for the user enrolment.
+- status: The status of the user enrolment.
+- enrolid: The ID of the enrolment associated with the user (link to table enrol: enrol.id).
+- userid: The ID of the user associated with the enrolment (link to table user: user.id).
+- timestart: The start timestamp of the user enrolment.
+- timeend: The end timestamp of the user enrolment.
+- modifierid: The ID of the modifier associated with the user enrolment.
+- timecreated: The timestamp of when the user enrolment was created.
+------
+quiz: this table store information about quiz ("bài tập", "bài trắc nghiệm")
+- id: The unique identifier for the quiz.
+- course: The ID of the course associated with the quiz (link to table course: course.id).
+- name: The name of the quiz. ("tên")
+- intro: The introduction or description of the quiz.
+- timeopen: The timestamp when the quiz opens.
+- timeclose: The timestamp when the quiz closes.("ngày hết hạn")
+- timelimit: The time limit for completing the quiz.
+- overduehandling: The handling of overdue submissions.
+- sumgrades: The sum of grades for the quiz. ("điểm tổng", "điểm cuối")
+- grade: The grade obtained for the quiz.
+- timecreated: The timestamp when the quiz was created.
+- timemodified: The timestamp when the quiz was last modified.
+- password: The password required to access the quiz.
+------
+assign: this table store information about assignments ("bài tập lớn")
+- id: The unique identifier for the assignment.("mã")
+- course: The ID of the course associated with the assignment. (Link to table course: course.id)
+- name: The name of the assignment. ("tên")
+- intro: The introduction or description of the assignment.
+- duedate: The due date of the assignment. ("ngày hết hạn")
+- allowsubmissionsfromdate: The date from which submissions are allowed.
+- grade: The grade associated with the assignment. ("điểm")
+- maxattempts: The maximum number of attempts allowed for the assignment.
+- timelimit: The time limit for the assignment.
+------
+quiz_attempts: this table mark the quiz's user attempted. The quiz of user is done when it's "state" is "finished".
+- id: unique code of every quiz attempt.
+- quiz: link to quiz.id
+- userid: link to user.id ("người dùng")
+- state: base on boolean value from the comparison of the value to "finished" ("trạng thái")
+- sumgrades: express total points of an attempt
+------
+assign_submission: this table mark the assignment that is submitted of not. If status = submitted, it's done. ("nộp bài tập lớn")
+- id: unique code of each submission of a assignment of a user.
+- assignment: link to assign.id
+- userid: link to user.id
+- status: base on boolean value from the comparison of the value to "submitted"
+------
+assign_grades
+- id: unique code of each assignment grade of a user.
+- assignment: link to assignment.id
+- userid: link to user.id
+- grade: grade of this assignment for this user. ("điểm")
+-----
+course_modules: use to link from quiz, assignment to course
+- id: unique code of each quiz or assignment module of a course
+- course: link to course.id
+- module: 1 if assignment, 17 if quiz. link to modules.id
+- instance: link to assign.id if assignment, link to quiz.id if quiz
+------
+"""

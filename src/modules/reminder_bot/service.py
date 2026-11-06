@@ -16,6 +16,7 @@ from datetime import datetime
 from src.core.config import settings
 from datetime import datetime, timedelta
 import numpy as np
+from src.core.exception import InternalServerError
 
 GROQ_API_KEY = settings.GROQ_API_KEY
 
@@ -109,21 +110,27 @@ class AssignReminderService():
         print("--------------------------------------------------------------------------------------------------------------")
         print("input:\n", input)
         print("--------------------------------------------------------------------------------------------------------------")
-        chain = (
-            PROMPT_REMINDER_ASSIGNMENT |
-            ChatGroq(
-                model_name="qwen/qwen3.6-27b",
-                temperature=0,
-                groq_api_key=GROQ_API_KEY
-            ) |
-            StrOutputParser()
-        )
-        reminder = await chain.ainvoke({ 
-            "input": input,
-            "number_of_assignments": len(list_assignments),
-            "reminder_format": reminder_format,
-            "recommend_format": recommend_format
-        })
+        
+        try:
+            chain = (
+                PROMPT_REMINDER_ASSIGNMENT |
+                ChatGroq(
+                    model_name="qwen/qwen3.6-27b",
+                    temperature=0,
+                    groq_api_key=GROQ_API_KEY
+                ) |
+                StrOutputParser()
+            )
+            reminder = await chain.ainvoke({ 
+                "input": input,
+                "number_of_assignments": len(list_assignments),
+                "reminder_format": reminder_format,
+                "recommend_format": recommend_format
+            })
+            
+        except Exception as e:
+            raise InternalServerError(f"Lỗi xảy ra khi chatbot tạo nhắc nhở assignment: {str(e)}")
+        
         print("--------------------------------------------------------------------------------------------------------------")
         print("create_assignment_reminder:\n", reminder)
         print("--------------------------------------------------------------------------------------------------------------")
@@ -394,21 +401,26 @@ class QuizReminderService():
         print("input:\n", input)
         print("--------------------------------------------------------------------------------------------------------------")
         
-        chain = (
-            PROMPT_REMINDER_QUIZ |
-            ChatGroq(
-                model_name="openai/gpt-oss-120b",
-                temperature=0,
-                groq_api_key=GROQ_API_KEY
-            ) |
-            StrOutputParser()
-        )
-        reminder = await chain.ainvoke({
-            "input": input,
-            "number_of_quizzes": len(list_quizzes), 
-            "reminder_format": reminder_format,
-            "recommend_format": recommend_format
-        })
+        try:
+            chain = (
+                PROMPT_REMINDER_QUIZ |
+                ChatGroq(
+                    model_name="openai/gpt-oss-120b",
+                    temperature=0,
+                    groq_api_key=GROQ_API_KEY
+                ) |
+                StrOutputParser()
+            )
+            reminder = await chain.ainvoke({
+                "input": input,
+                "number_of_quizzes": len(list_quizzes), 
+                "reminder_format": reminder_format,
+                "recommend_format": recommend_format
+            })
+            
+        except Exception as e:
+            raise InternalServerError(f"Lỗi xảy ra khi chatbot tạo nhắc nhở quiz: {str(e)}")
+        
         print("--------------------------------------------------------------------------------------------------------------")
         print("create_quiz_reminder:\n", reminder)
         print("--------------------------------------------------------------------------------------------------------------")

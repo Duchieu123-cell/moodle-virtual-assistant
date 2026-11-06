@@ -4,6 +4,7 @@ import base64
 import io
 from PIL import Image
 from src.core.config import settings
+from src.core.exception import InternalServerError
 
 GROQ_API_KEY = settings.GROQ_API_KEY
 

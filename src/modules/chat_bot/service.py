@@ -17,11 +17,11 @@ class ChatService():
         user_msg = data.message
     
         # 1. Phân loại Intent bằng Machine Learning (Nhanh & Chính xác)
-        print("----------------------------------------------------------------")
+        print("-"*60)
         print(f"Analyzing intent for: '{user_msg}'")
         role = ChatService.intent_classifier.predict(user_msg)
         print(f"DETECTED ROLE: {role}")
-        print("----------------------------------------------------------------")
+        print("-"*60)
         # 2. Định tuyến (Routing)
         
         if role == 1:

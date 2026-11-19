@@ -20,7 +20,7 @@ class RagService():
     vector_db = VectorDatabaseSingleton.get()
     
     @staticmethod
-    async def retrieve(message: str):
+    async def retrieve(message: str) -> tuple[str | None, list[dict]]:
         """
         Tìm kiếm tài liệu và format thành context.
         Trả về (None, []) nếu không tìm thấy tài liệu phù hợp.
@@ -55,7 +55,7 @@ class RagService():
         # 2. Kiểm tra danh sách rỗng (Empty List Check)
         # Trường hợp này xảy ra khi không có doc nào vượt qua ngưỡng threshold
         if not retrieved_docs or len(retrieved_docs) == 0:
-            print("LOG: No documents passed the relevance threshold.")
+            print("No documents passed the relevance threshold.")
             return None, []
 
         if len(retrieved_docs) > 0:
@@ -77,32 +77,32 @@ class RagService():
             response = await chain.ainvoke({ "input": message, "documents": context})
             chosen_ids = response.list_ids if response and response.list_ids else []
             if not chosen_ids:
-                print("LOG: No documents were chosen by the LLM.")
+                print("No documents were chosen by the LLM.")
                 return None, []
             
-            print(f"LOG: Chosen document IDs: {chosen_ids}")
+            print(f"Chosen document IDs: {chosen_ids}")
             
             # 2.2. Lọc lại retrieved_docs chỉ giữ những doc có ID trong chosen_ids
             retrieved_docs = [retrieved_docs[i.id] for i in chosen_ids if i.id < len(retrieved_docs)]
         
             # Trường hợp này xảy ra khi không có doc nào lọc ra sau bước chọn lọc bằng prompt
             if not retrieved_docs or len(retrieved_docs) == 0:
-                print("LOG: No documents passed the relevance threshold.")
+                print("No documents passed the relevance threshold.")
                 return None, []
         
         # 3. Xử lý tài liệu để tạo context trả về
         context = ""
         fileinfos = []
         for i, doc in enumerate(retrieved_docs):
-            filename = doc.metadata.get('filename')
+            filename: str = doc.metadata.get('filename')
             page = int(doc.metadata.get("page"))
             
             # Format context rõ ràng hơn để LLM dễ đọc
             context += f"--- Doc {i+1}: {filename}, page: {page} ---\nContent: {doc.page_content}\n\n"
 
             fileinfo = {
-                "filename"  : filename,
-                "fileurl"   : doc.metadata.get("fileurl"),
+                "filename": filename,
+                "fileurl": doc.metadata.get("fileurl"),
                 "pagenumber": page
             }
             
@@ -111,9 +111,9 @@ class RagService():
                 fileinfos.append(fileinfo)
 
         # In ra để tiện debug
-        print("----------------------------------------------------------------")
+        print("-"*60)
         print(f"CONTEXT FOUND ({len(retrieved_docs)} docs):\n{context}...")
-        print("----------------------------------------------------------------")
+        print("-"*60)
         
         return context, fileinfos
     
@@ -140,9 +140,9 @@ class RagService():
         context, fileinfos = await RagService.retrieve(message)
         websearchinfos = []  # Khởi tạo danh sách websearchinfos để trả về cho Frontend, sẽ chứa dict với 'title' và 'url'
         
-        # 2. Xử lý trường hợp Context Rỗng (Mượt mà)
+        # 2. Xử lý trường hợp context rỗng
         if not context:
-            print("RAG Action: Local Database empty for this query. Falling back to Web Search...")
+            print("Current knowledge base is empty for this query. Falling back to Web Search...")
             
             # Khai thác QueryRefiner một lần nữa để lấy keyword search web cho chuẩn
             search_keyword = await QueryRefiner.refine(message)
@@ -150,7 +150,7 @@ class RagService():
 
             # Kiểm tra nếu web_results bị rỗng (mất mạng hoặc không có kết quả)
             if not web_results:
-                print("RAG Action: Web search also failed or returned empty.")
+                print("Web search không cho kết quả.")
                 return "Xin lỗi, tôi không tìm thấy thông tin trong cơ sở dữ liệu và cả trên Internet để trả lời bạn.", []
             
             # Khởi tạo lại context vào websearchinfos cho Web
@@ -174,12 +174,11 @@ class RagService():
                 if websearchinfo not in websearchinfos:
                     websearchinfos.append(websearchinfo)
             
-            print("----------------------------------------------------------------")
+            print("-"*60)
             print(f"WEB CONTEXT FOUND ({len(web_results)} results):\n{context}...")
-            print("----------------------------------------------------------------")
+            print("-"*60)
 
         # 3. Nếu có Context (từ Local DB hoặc Web), gọi LLM sinh câu trả lời
-        print("RAG Action: Sending context to LLM...")
         try:
             chain = (
                 PROMPT_RAG | 
@@ -195,9 +194,11 @@ class RagService():
                 "context": context,
                 "input": message
             })
-            print("----------------------------------------------------------------")
-            print("RAG RESPONSE:\n", response)
-            print("----------------------------------------------------------------")        
+            
+            print("-"*60)
+            print("Rag response:\n", response)
+            print("-"*60)
+                 
             return {
                 "response": response,
                 "fileinfos": fileinfos,
@@ -206,5 +207,5 @@ class RagService():
             }
             
         except Exception as e:
-            print(f"Error calling LLM: {e}")
+            print(f"Error occurred while calling LLM: {e}")
             return "Xin lỗi, hệ thống đang gặp sự cố khi xử lý câu trả lời. Vui lòng thử lại sau.", []

@@ -26,10 +26,9 @@ class TalkService():
             "chat_history": format_chat_history(chat_history),
             "input": user_msg
         })
-        print("--------------------------------------------------------------------------------------------------------------")
-        print("TALK RESPONSE:\n", response)
-        print("--------------------------------------------------------------------------------------------------------------")
-        return {
-            "response": response,
-            "type": "talk"
-        }
+        
+        print("-"*60)
+        print("Talk response :\n", response)
+        print("-"*60)
+        
+        return { "response": response, "type": "talk" }

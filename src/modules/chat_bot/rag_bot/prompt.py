@@ -42,6 +42,22 @@ Input:
 Output:
 """)
 
+PROMPT_WEB_QUERY_REWRITE = PromptTemplate.from_template("""
+You are an expert search query optimizer. Rewrite the user's latest question into a concise, self-contained web search query.
+
+## Chat History:
+{chat_history}
+
+## Latest Question:
+"{question}"
+
+## Rules:
+1. Resolve pronouns or implicit references (e.g., "nó", "cái đó", "thuật toán này", "it", "this") using Chat History.
+2. Keep specific technical terms, acronyms, and important context intact.
+3. Preserve the original language (Vietnamese or English) as appropriate for searching.
+4. Output ONLY the rewritten search query string without quotes or explanations.
+""")
+
 PROMPT_CHOOSE_DOCS = PromptTemplate.from_template("""
 You are an assistant that used for choosing relevant documents based on user's input and given documents with high precision.                                                   
 ## Instructions:

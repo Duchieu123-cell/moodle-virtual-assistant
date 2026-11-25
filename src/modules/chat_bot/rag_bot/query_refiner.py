@@ -1,8 +1,10 @@
 from langchain_core.output_parsers import StrOutputParser
 from src.modules.chat_bot.rag_bot.prompt import (
-    PROMPT_REFINE, 
-    PROMPT_TRANSLATE
+    PROMPT_REFINE,
+    PROMPT_TRANSLATE,
+    PROMPT_WEB_QUERY_REWRITE
 )
+from src.modules.chat_bot.schemas import ChatTurn, format_chat_history
 
 from langchain_groq import ChatGroq
 from src.core.config import settings
@@ -56,3 +58,36 @@ class QueryRefiner():
         except Exception as e:
             print(f"Error translating question: {e}. Using original question.")
             return question
+
+    @staticmethod
+    async def rewrite_for_web(
+        question: str,
+        chat_history: list[ChatTurn],
+        fallback_query: str | None = None
+    ) -> str:
+        """
+        Viết lại câu truy vấn tìm kiếm web độc lập ngữ cảnh từ lịch sử hội thoại.
+        Nếu không có lịch sử hội thoại, tái sử dụng fallback_query để tiết kiệm 1 lượt gọi LLM.
+        """
+        base_query = (fallback_query or question).strip()
+        if not chat_history:
+            return base_query
+
+        try:
+            rewritten = await (
+                PROMPT_WEB_QUERY_REWRITE |
+                ChatGroq(
+                    model_name="openai/gpt-oss-20b",
+                    temperature=0,
+                    groq_api_key=GROQ_API_KEY
+                ) |
+                StrOutputParser()
+            ).ainvoke({
+                "chat_history": format_chat_history(chat_history),
+                "question": question
+            })
+            cleaned = rewritten.strip().strip('"').strip("'")
+            return cleaned if cleaned else base_query
+        except Exception as e:
+            print(f"Error rewriting query for web search: {e}. Using base query.")
+            return base_query

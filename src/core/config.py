@@ -6,6 +6,7 @@ class Settings(BaseSettings):
     GROQ_API_KEY: str
     ES_URL: str
     PROJECT_NAME: str
+    TAVILY_API_KEY: str | None = None
     
     model_config = SettingsConfigDict(
         env_file=".env",

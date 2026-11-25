@@ -1,3 +1,10 @@
+from contextlib import asynccontextmanager
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
+from starlette.middleware.cors import CORSMiddleware
+
+from src.core.config import settings
+from src.core.exception import AppException
 from src.modules.analyze_bot.router import router as analyze_router
 from src.modules.chat_bot.router import router as chat_router
 from src.modules.docs_suggest_bot.router import router as docs_suggest_router
@@ -5,15 +12,18 @@ from src.modules.file_upload.router import router as file_upload_router
 from src.modules.quiz_gen_bot.router import router as quiz_gen_router
 from src.modules.reminder_bot.router import router as reminder_router
 from src.modules.status_check.router import router as status_check_router
-from src.core.exception import AppException
-from starlette.middleware.cors import CORSMiddleware
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
-from src.core.config import settings
+from src.modules.vector_database.vector_db import VectorDatabaseSingleton
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    yield
+    await VectorDatabaseSingleton.get().close()
 
 
 app = FastAPI(
-    title=settings.PROJECT_NAME
+    title=settings.PROJECT_NAME,
+    lifespan=lifespan,
 )
 
 app.add_middleware(

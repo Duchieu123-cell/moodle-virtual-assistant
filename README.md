@@ -77,12 +77,12 @@ Thay vì phụ thuộc vào một cơ sở dữ liệu duy nhất, module `src/m
    - Can thiệp sâu vào `settings` và `mappings` khi khởi tạo index `"moodle-files"` thay vì dùng cấu hình mặc định:
      - **`vi_index_analyzer`**: Dùng `tokenizer: "vi_tokenizer"` kết hợp filter `lowercase` để tách từ ghép tiếng Việt chính xác khi lập chỉ mục.
      - **`vi_search_analyzer`**: Dùng `tokenizer: "vi_tokenizer"` kết hợp `lowercase` và `my_synonym_graph` (`synonym_graph`, `expand: True`) nạp từ danh sách từ đồng nghĩa chuyên ngành Anh–Việt trong `src/modules/vector_database/synonyms.py`.
-     - **Custom `ElasticsearchBM25Retriever`**: Truy vấn `bool` với `must.match` trên trường `text` (`fuzziness: "AUTO"`) và `should.match_phrase` trên `metadata.course_name` (`boost: 2.0`) để ưu tiên tài liệu đúng môn học.
-   - *Lưu ý*: Node Elasticsearch cần cài đặt plugin tiếng Việt hỗ trợ `vi_tokenizer` (nếu Elasticsearch không khả dụng, hệ thống tự động fallback sang tìm kiếm chỉ dùng Pinecone).
+     - **Custom `ElasticsearchBM25Retriever`**: Truy vấn `bool` với `must.match` trên trường `text`, hỗ trợ lọc cứng (`strict_filter=True`) hoặc `should.match_phrase` trên `metadata.course_name` (`boost: 2.0`) để ưu tiên tài liệu đúng môn học, tự động cô lập lỗi nếu index chưa tồn tại.
+   - *Lưu ý*: Node Elasticsearch cần cài đặt plugin tiếng Việt hỗ trợ `vi_tokenizer` (nếu Elasticsearch không khả dụng hoặc chưa có index, hệ thống vẫn tiếp tục trả về kết quả từ Pinecone).
 3. **Hợp nhất & Xếp hạng lại (Fusion & Reranking)**:
    - Kết hợp ứng viên từ Pinecone và Elasticsearch qua `EnsembleRetriever` (`weights=[0.5, 0.5]`), sau đó khử trùng lặp theo nội dung.
-   - Mở rộng truy vấn theo từ đồng nghĩa (`_expand_query_with_synonyms`, giới hạn `max_Expansion=4` để tránh nghẽn CPU).
-   - Chấm điểm lại từng cặp `(query_variant, document)` bằng `CrossEncoder("cross-encoder/mmarco-mMiniLMv2-L12-H384-v1")` trên worker thread (`asyncio.to_thread`), lấy điểm **Max-Pooling**, chuẩn hóa **Sigmoid**, cộng điểm thưởng môn học (`+0.15`, tối đa `1.0`) và lọc theo ngưỡng `threshold`.
+   - Mở rộng truy vấn theo từ đồng nghĩa dạng round-robin (`_expand_query_with_synonyms`, giới hạn `max_expansion=4` để tránh nghẽn CPU).
+   - Chấm điểm lại từng cặp `(query_variant, document)` bằng `CrossEncoder("cross-encoder/mmarco-mMiniLMv2-L12-H384-v1", activation_fn=nn.Sigmoid())` trên worker thread (`asyncio.to_thread`), lấy điểm **Max-Pooling**, cộng điểm thưởng môn học (`+0.15`, tối đa `1.0` khi `strict_filter=False`) và lọc theo ngưỡng `threshold`.
 
 ---
 
@@ -91,7 +91,7 @@ Thay vì phụ thuộc vào một cơ sở dữ liệu duy nhất, module `src/m
 | Module (`src/modules/`) | Công nghệ / Thuật toán | Vai trò chính |
 | :--- | :--- | :--- |
 | `intent_classifier` | `all-MiniLM-L6-v2` + `StandardScaler` + `SVC` | Phân loại tin nhắn `/chat` thành 3 luồng: `1` (RAG), `2` (Query SQL), `3` (Talk). Dùng ngưỡng tự tin `0.75` (fallback an toàn về RAG). |
-| `chat_bot/rag_bot` | `QueryRefiner` (VI↔EN), Hybrid Search, Groq LLM, DuckDuckGo | Tinh chỉnh & dịch song ngữ câu hỏi, lọc tài liệu liên quan theo JSON schema, tự động tìm kiếm web fallback khi thiếu dữ liệu nội bộ, trả về HTML + nguồn trích dẫn. |
+| `chat_bot/rag_bot` | `QueryRefiner` (VI↔EN), Hybrid Search, Groq LLM, Tavily / DDGS | Tinh chỉnh & dịch song ngữ câu hỏi, tìm kiếm song song, chọn lọc tài liệu bằng JSON schema, fallback tìm kiếm Web 2 tầng bất đồng bộ (`AsyncTavilyClient` + `DDGS`/`httpx`/`lxml`), trả về HTML + nguồn trích dẫn. |
 | `chat_bot/query_bot` | Groq LLM, Moodle `{table}` schema | Sinh MySQL `SELECT`, tự sửa lỗi SQL, kiểm soát bảo mật bắt buộc lọc `user_id` với quyền `student`, diễn giải kết quả thành HTML. |
 | `chat_bot/talk_bot` | Groq LLM | Giao tiếp tự nhiên và giới thiệu tính năng hệ thống. |
 | `file_processor` & `vision_processor` | PyMuPDF (`pymupdf`), Pillow, Groq Vision | Làm sạch header/footer lặp, tách bảng thành Markdown không lặp chữ, bỏ qua trang mục lục/rác, chuẩn hóa Unicode `NFC`, phân tích sơ đồ/biểu đồ (render 2x PNG, bỏ qua ảnh trang trí qua cờ `SKIP_IMAGE`). |
@@ -164,6 +164,8 @@ PINECONE_API_KEY=your_pinecone_api_key
 GROQ_API_KEY=your_groq_api_key
 ES_URL=http://localhost:9200
 PROJECT_NAME=virtual_assistant
+# Tùy chọn (nếu để trống hệ thống sẽ tự fallback sang DDGS + httpx/lxml)
+TAVILY_API_KEY=your_tavily_api_key
 ```
 
 > Lưu ý: Không đưa API key thật vào lịch sử Git khi triển khai thực tế.

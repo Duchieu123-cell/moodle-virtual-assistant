@@ -1,23 +1,26 @@
+import asyncio
+import logging
+import re
+import uuid
+
+from elasticsearch import AsyncElasticsearch, helpers
+from langchain_classic.retrievers import EnsembleRetriever
+from langchain_core.callbacks import CallbackManagerForRetrieverRun
+from langchain_core.documents import Document
+from langchain_core.retrievers import BaseRetriever
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_pinecone import PineconeVectorStore
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+import numpy as np
+from pinecone import Pinecone, ServerlessSpec
+from sentence_transformers import CrossEncoder
+from torch import nn
+
+from src.core.config import settings
 from src.modules.file_processor.service import FileProcessService
 from src.modules.vector_database.synonyms import synonym_list
-from langchain_core.callbacks import CallbackManagerForRetrieverRun
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_classic.retrievers import EnsembleRetriever
-from langchain_huggingface import HuggingFaceEmbeddings
-from elasticsearch import AsyncElasticsearch, helpers
-from langchain_core.retrievers import BaseRetriever
-from langchain_pinecone import PineconeVectorStore
-from sentence_transformers import CrossEncoder
-from pinecone import Pinecone, ServerlessSpec
-from langchain_core.documents import Document
-from fastapi import HTTPException, status
-from src.core.config import settings
-from typing import Optional
-import numpy as np
-import itertools
-import asyncio
-import uuid
-import re
+
+logger = logging.getLogger(__name__)
 
 PINECONE_API_KEY = settings.PINECONE_API_KEY
 ES_URL = settings.ES_URL
@@ -25,17 +28,20 @@ ES_INDEX_NAME = PINECONE_INDEX_NAME = "moodle-files"
 
 
 # ===============================================================
-# CLASS CUSTOM RETRIEVER CHO ELASTICSEARCH (BM25 + SOFT BOOSTING)
+# CLASS CUSTOM RETRIEVER CHO ELASTICSEARCH (BM25 + FILTER/BOOST)
 # ===============================================================
 class ElasticsearchBM25Retriever(BaseRetriever):
     """
     Custom Retriever thực hiện tìm kiếm BM25 trực tiếp trên Elasticsearch,
-    hỗ trợ ưu tiên (boost) theo course_name ngay từ tầng truy vấn.
+    hỗ trợ lọc cứng (strict_filter) hoặc ưu tiên (boost) theo metadata.
     """
+
     client: AsyncElasticsearch
     index_name: str
     k: int
-    target_course: Optional[str] = None
+    target_course: str | None = None
+    metadata_filters: dict | None = None
+    strict_filter: bool = False
 
     def _get_relevant_documents(
         self, query: str, *, run_manager: CallbackManagerForRetrieverRun = None
@@ -45,48 +51,65 @@ class ElasticsearchBM25Retriever(BaseRetriever):
     async def _aget_relevant_documents(
         self, query: str, *, run_manager: CallbackManagerForRetrieverRun = None
     ) -> list[Document]:
-        # Sử dụng bool query: Bắt buộc khớp nội dung text (must), và ưu tiên khớp course_name (should)
+        filter_clauses = []
         should_clauses = []
-        if self.target_course:
-            should_clauses.append({
-                "match_phrase": {
-                    "metadata.course_name": {
-                        "query": self.target_course,
-                        "boost": 2.0  # Tăng điểm BM25 cho tài liệu thuộc đúng môn học
+
+        if self.metadata_filters:
+            for key, value in self.metadata_filters.items():
+                if value is None:
+                    continue
+                if self.strict_filter or key != "course_name":
+                    filter_clauses.append(
+                        {"match_phrase": {f"metadata.{key}": value}}
+                    )
+
+        if not self.strict_filter and self.target_course:
+            should_clauses.append(
+                {
+                    "match_phrase": {
+                        "metadata.course_name": {
+                            "query": self.target_course,
+                            "boost": 2.0,
+                        }
                     }
                 }
-            })
+            )
 
-        search_query = {
-            "size": self.k,
-            "query": {
-                "bool": {
-                    "must": [
-                        {
-                            "match": {
-                                "text": {
-                                    "query": query,
-                                    "fuzziness": "AUTO"
-                                }
-                            }
+        bool_query: dict = {
+            "must": [
+                {
+                    "match": {
+                        "text": {
+                            "query": query,
                         }
-                    ],
-                    "should": should_clauses
+                    }
                 }
-            }
+            ]
         }
+        if filter_clauses:
+            bool_query["filter"] = filter_clauses
+        if should_clauses:
+            bool_query["should"] = should_clauses
 
-        response = await self.client.search(index=self.index_name, body=search_query)
+        try:
+            response = await self.client.search(
+                index=self.index_name,
+                size=self.k,
+                query={"bool": bool_query},
+            )
+        except Exception as e:
+            logger.warning("Elasticsearch search skipped (%s): %s", self.index_name, e)
+            return []
 
         documents = []
-        for hit in response["hits"]["hits"]:
-            source = hit["_source"]
-            doc = Document(
-                page_content=source.get("text", ""),
-                metadata=source.get("metadata", {})
+        for hit in response.get("hits", {}).get("hits", []):
+            source = hit.get("_source", {})
+            documents.append(
+                Document(
+                    page_content=source.get("text", ""),
+                    metadata=source.get("metadata", {}),
+                )
             )
-            documents.append(doc)
-
         return documents
 
 
@@ -97,96 +120,118 @@ class VectorDatabase:
     def __init__(self):
         self.pc = Pinecone(api_key=PINECONE_API_KEY)
         self._ensure_pinecone_index()
+        self._pinecone_index = self.pc.Index(PINECONE_INDEX_NAME)
 
         # 1. Model Embedding Đa ngôn ngữ (Hỗ trợ tốt Tiếng Việt + Tiếng Anh, giữ nguyên 768 chiều)
-        print("Loading Multilingual Embedding Model...")
+        logger.info("Loading Multilingual Embedding Model...")
         self.embedding_model = HuggingFaceEmbeddings(
             model_name="sentence-transformers/paraphrase-multilingual-mpnet-base-v2",
-            encode_kwargs={"normalize_embeddings": True}
+            encode_kwargs={"normalize_embeddings": True},
+        )
+        self._pinecone_store = PineconeVectorStore(
+            index=self._pinecone_index,
+            embedding=self.embedding_model,
         )
 
         # 2. Khởi tạo Elasticsearch Client
-        print(f"Đang kết nối đến Elasticsearch tại {ES_URL}...")
-        try:
-            self.es_client = AsyncElasticsearch(
-                hosts=[ES_URL],
-                verify_certs=False,
-                request_timeout=60
-            )
-            print("Elasticsearch client đã được khởi tạo.")
-        except Exception as e:
-            print(f"Lỗi kết nối đến Elasticsearch: {e}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Lỗi kết nối đến Elasticsearch: {e}"
-            )
+        logger.info("Initializing Elasticsearch client at %s...", ES_URL)
+        self.es_client: AsyncElasticsearch | None = None
+        if ES_URL:
+            try:
+                self.es_client = AsyncElasticsearch(
+                    hosts=[ES_URL],
+                    verify_certs=False,
+                    request_timeout=60,
+                )
+            except Exception as e:
+                logger.warning("Failed to initialize Elasticsearch client: %s", e)
 
-        # 3. Khởi tạo Reranker Đa ngôn ngữ (hỗ trợ Tiếng Việt & Tiếng Anh)
-        print("Loading Multilingual Rerank Model...")
-        self.rerank_model = CrossEncoder("cross-encoder/mmarco-mMiniLMv2-L12-H384-v1")
+        # 3. Khởi tạo Reranker Đa ngôn ngữ với Sigmoid rõ ràng (tránh Double Sigmoid)
+        logger.info("Loading Multilingual Rerank Model...")
+        self.rerank_model = CrossEncoder(
+            "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1",
+            activation_fn=nn.Sigmoid(),
+        )
 
-        # 4. Chuẩn bị Dictionary cho việc map từ đồng nghĩa
+        # 4. Chuẩn bị Dictionary và compile Regex 1 lần cho việc map từ đồng nghĩa
         self.synonym_dict = self._build_synonym_dict(synonym_list)
+        self._synonym_pattern: re.Pattern | None = None
+        if self.synonym_dict:
+            sorted_keys = sorted(self.synonym_dict.keys(), key=len, reverse=True)
+            pattern_str = r"(?<!\w)(" + "|".join(map(re.escape, sorted_keys)) + r")(?!\w)"
+            self._synonym_pattern = re.compile(pattern_str, re.IGNORECASE)
 
-    def _build_synonym_dict(self, raw_synonyms: list[str]) -> dict:
+    async def close(self):
+        """Đóng kết nối AsyncElasticsearch khi FastAPI shutdown."""
+        if self.es_client is not None:
+            try:
+                await self.es_client.close()
+            except Exception as e:
+                logger.warning("Error closing Elasticsearch client: %s", e)
+
+    def _build_synonym_dict(self, raw_synonyms: list[str]) -> dict[str, list[str]]:
         """
         Biến đổi danh sách synonym thành dictionary (hỗ trợ gộp nếu 1 từ xuất hiện ở nhiều dòng).
         """
-        syn_dict = {}
+        syn_dict: dict[str, list[str]] = {}
         for line in raw_synonyms:
             terms = [t.strip().lower() for t in line.split(",") if t.strip()]
             for term in terms:
-                others = [t for t in terms if t != term]
-                if term not in syn_dict:
-                    syn_dict[term] = []
-                for o in others:
-                    if o not in syn_dict[term]:
-                        syn_dict[term].append(o)
+                existing = syn_dict.setdefault(term, [])
+                for other in terms:
+                    if other != term and other not in existing:
+                        existing.append(other)
         return syn_dict
 
-    def _expand_query_with_synonyms(self, query: str, max_Expansion: int = 4) -> list[str]:
+    def _expand_query_with_synonyms(self, query: str, max_expansion: int = 4) -> list[str]:
         """
-        Mở rộng câu truy vấn với từ đồng nghĩa, giới hạn số lượng tổ hợp tối đa (max_Expansion)
-        để tránh bùng nổ tổ hợp làm nghẽn CPU khi Rerank.
+        Mở rộng câu truy vấn với từ đồng nghĩa theo vòng tròn (round-robin) trên mọi cụm khớp,
+        giới hạn số biến thể tối đa (max_expansion) để tránh nghẽn CPU khi Rerank.
         """
-        if not self.synonym_dict:
+        if not self._synonym_pattern or not self.synonym_dict or max_expansion <= 1:
             return [query]
 
-        sorted_keys = sorted(self.synonym_dict.keys(), key=len, reverse=True)
-        # Dùng lookbehind/lookahead khoảng trắng hoặc đầu/cuối câu để bắt chuẩn tiếng Việt có dấu
-        pattern_str = r'(?<!\w)(' + '|'.join(map(re.escape, sorted_keys)) + r')(?!\w)'
-        pattern = re.compile(pattern_str, re.IGNORECASE)
-
-        tokens = pattern.split(query)
-        options_per_token = []
-
-        for token in tokens:
+        tokens = self._synonym_pattern.split(query)
+        matched_positions: list[tuple[int, list[str]]] = []
+        for idx, token in enumerate(tokens):
             if not token:
-                options_per_token.append([token])
                 continue
+            synonyms = self.synonym_dict.get(token.lower())
+            if synonyms:
+                matched_positions.append((idx, synonyms))
 
-            token_lower = token.lower()
-            if token_lower in self.synonym_dict:
-                synonyms = self.synonym_dict[token_lower]
-                options = [token] + synonyms
-                options_per_token.append(options)
-            else:
-                options_per_token.append([token])
+        if not matched_positions:
+            return [query]
 
-        expanded_queries = [query]  # Luôn ưu tiên câu truy vấn gốc ở vị trí đầu tiên
-        for combination in itertools.product(*options_per_token):
-            full_sentence = "".join(combination)
-            if full_sentence not in expanded_queries:
-                expanded_queries.append(full_sentence)
-            if len(expanded_queries) >= max_Expansion:
-                break
+        expanded_queries = [query]
+        max_syn_depth = max(len(syns) for _, syns in matched_positions)
+
+        # Thay thế công bằng từng cụm khớp theo lượt (round-robin)
+        for syn_idx in range(max_syn_depth):
+            for pos, syns in matched_positions:
+                if syn_idx >= len(syns):
+                    continue
+                variant_tokens = list(tokens)
+                variant_tokens[pos] = syns[syn_idx]
+                variant = "".join(variant_tokens)
+                if variant not in expanded_queries:
+                    expanded_queries.append(variant)
+                if len(expanded_queries) >= max_expansion:
+                    return expanded_queries
+
+        # Nếu có từ 2 cụm khớp trở lên và còn ngân sách, thêm 1 biến thể thay thế đồng thời
+        if len(matched_positions) >= 2 and len(expanded_queries) < max_expansion:
+            all_replaced = list(tokens)
+            for pos, syns in matched_positions:
+                all_replaced[pos] = syns[0]
+            combined = "".join(all_replaced)
+            if combined not in expanded_queries:
+                expanded_queries.append(combined)
 
         return expanded_queries
 
     def _ensure_pinecone_index(self):
-        """
-        Đảm bảo Index trên Pinecone đã tồn tại (768 dimensions).
-        """
+        """Đảm bảo Index trên Pinecone đã tồn tại (768 dimensions)."""
         try:
             existing_indexes = [i.name for i in self.pc.list_indexes()]
             if PINECONE_INDEX_NAME not in existing_indexes:
@@ -194,85 +239,105 @@ class VectorDatabase:
                     PINECONE_INDEX_NAME,
                     dimension=768,
                     metric="cosine",
-                    spec=ServerlessSpec(cloud="aws", region="us-east-1")
+                    spec=ServerlessSpec(cloud="aws", region="us-east-1"),
                 )
-                print(f"Pinecone index '{PINECONE_INDEX_NAME}' đã được tạo.")
+                logger.info("Pinecone index '%s' đã được tạo.", PINECONE_INDEX_NAME)
         except Exception as e:
-            print(f"Lỗi khi tạo index Pinecone: {e}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Lỗi khi tạo index Pinecone: {e}"
-            )
+            logger.exception("Lỗi khi kiểm tra/tạo index Pinecone: %s", e)
+            raise RuntimeError(f"Lỗi khi tạo index Pinecone: {e}") from e
 
     def _get_pinecone_store(self) -> PineconeVectorStore:
-        return PineconeVectorStore(
-            embedding=self.embedding_model,
-            index_name=PINECONE_INDEX_NAME,
-            pinecone_api_key=PINECONE_API_KEY
-        )
+        return self._pinecone_store
 
     async def _create_es_index_if_not_exists(self):
-        """
-        Kiểm tra và tạo Index trong Elasticsearch với cấu hình tiếng Việt.
-        """
+        """Kiểm tra và tạo Index trong Elasticsearch với cấu hình tiếng Việt."""
+        if self.es_client is None:
+            return
+
         if not await self.es_client.indices.exists(index=ES_INDEX_NAME):
-            print(f"Creating index {ES_INDEX_NAME} with Vietnamese Plugin config...")
+            logger.info("Creating ES index '%s' with Vietnamese analyzer...", ES_INDEX_NAME)
             await self.es_client.indices.create(
                 index=ES_INDEX_NAME,
-                body={
-                    "settings": {
-                        "analysis": {
-                            "filter": {
-                                "my_synonym_graph": {
-                                    "type": "synonym_graph",
-                                    "synonyms": synonym_list,
-                                    "expand": True
-                                }
-                            },
-                            "analyzer": {
-                                "vi_search_analyzer": {
-                                    "tokenizer": "vi_tokenizer",
-                                    "filter": ["lowercase", "my_synonym_graph"]
-                                },
-                                "vi_index_analyzer": {
-                                    "tokenizer": "vi_tokenizer",
-                                    "filter": ["lowercase"]
-                                }
+                settings={
+                    "analysis": {
+                        "filter": {
+                            "my_synonym_graph": {
+                                "type": "synonym_graph",
+                                "synonyms": synonym_list,
+                                "expand": True,
                             }
-                        }
-                    },
-                    "mappings": {
-                        "properties": {
-                            "text": {
-                                "type": "text",
-                                "analyzer": "vi_index_analyzer",
-                                "search_analyzer": "vi_search_analyzer"
+                        },
+                        "analyzer": {
+                            "vi_search_analyzer": {
+                                "tokenizer": "vi_tokenizer",
+                                "filter": ["lowercase", "my_synonym_graph"],
                             },
-                            "metadata": {
-                                "type": "object"
-                            }
-                        }
+                            "vi_index_analyzer": {
+                                "tokenizer": "vi_tokenizer",
+                                "filter": ["lowercase"],
+                            },
+                        },
                     }
-                }
+                },
+                mappings={
+                    "properties": {
+                        "text": {
+                            "type": "text",
+                            "analyzer": "vi_index_analyzer",
+                            "search_analyzer": "vi_search_analyzer",
+                        },
+                        "metadata": {
+                            "properties": {
+                                "course_name": {"type": "keyword"},
+                                "filename": {"type": "keyword"},
+                                "fileurl": {"type": "keyword"},
+                                "page": {"type": "integer"},
+                                "start_index": {"type": "integer"},
+                            }
+                        },
+                    }
+                },
             )
+
+    def _purge_pinecone_prefix_sync(self, doc_prefix: str):
+        prefix = f"{doc_prefix}#"
+        for id_batch in self._pinecone_index.list(prefix=prefix):
+            if id_batch:
+                self._pinecone_index.delete(ids=list(id_batch))
+
+    async def _purge_existing_file_chunks(self, doc_prefix: str, use_es: bool):
+        """Xóa các chunk cũ của cùng tài liệu trước khi re-index để tránh dữ liệu mồ côi."""
+        tasks = [asyncio.to_thread(self._purge_pinecone_prefix_sync, doc_prefix)]
+        if use_es and self.es_client is not None:
+            if await self.es_client.indices.exists(index=ES_INDEX_NAME):
+                tasks.append(
+                    self.es_client.delete_by_query(
+                        index=ES_INDEX_NAME,
+                        query={"prefix": {"_id": f"{doc_prefix}#"}},
+                        refresh=True,
+                    )
+                )
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for res in results:
+            if isinstance(res, Exception):
+                logger.warning("Failed to purge stale chunks for prefix %s: %s", doc_prefix, res)
 
     async def add_file_to_index(self, file_path: str, metadata: dict) -> bool:
         """
         Trích xuất nội dung từ file, chia chunk bảo toàn cấu trúc Bảng/Vision,
-        và lưu đồng bộ (Upsert) vào Pinecone + Elasticsearch.
+        xóa chunk cũ (nếu re-index) và lưu đồng bộ vào Pinecone + Elasticsearch.
         """
         try:
-            print(f"-------------- Processing file: {file_path} --------------")
+            logger.info("Processing file for indexing: %s", file_path)
             # --- BƯỚC 1: TRÍCH XUẤT NỘI DUNG TỪ FILE PROCESS SERVICE ---
             docs = await FileProcessService.process_file(file_path, metadata)
             if not docs:
-                print("No valid content extracted from file.")
+                logger.info("No valid content extracted from file: %s", file_path)
                 return False
 
-            print(f"Extracted {len(docs)} valid pages from file.")
+            logger.info("Extracted %d valid pages from file.", len(docs))
 
             # --- BƯỚC 2: CHIA CHUNK BẢO TOÀN BẢNG & MÔ TẢ HÌNH ẢNH ---
-            # Ưu tiên giữ nguyên khối Bảng dữ liệu và khối Phân tích Hình ảnh/Sơ đồ
             text_splitter = RecursiveCharacterTextSplitter(
                 separators=[
                     "\n\n[Nội dung phân tích từ Hình ảnh/Sơ đồ]\n",
@@ -281,81 +346,122 @@ class VectorDatabase:
                     "\n",
                     ". ",
                     " ",
-                    ""
+                    "",
                 ],
                 chunk_size=1200,
                 chunk_overlap=200,
                 length_function=len,
-                add_start_index=True
+                add_start_index=True,
             )
             splits = text_splitter.split_documents(docs)
             if not splits:
                 return False
 
-            # --- BƯỚC 3: BỔ SUNG NGỮ CẢNH ĐẦU CHUNK & TẠO DETERMINISTIC ID ---
+            # --- BƯỚC 3: BỔ SUNG NGỮ CẢNH ĐẦU CHUNK & TẠO PREFIX ID TẤT ĐỊNH ---
+            base_course = metadata.get("course_name", "")
+            base_filename = metadata.get("filename", "")
+            base_fileurl = metadata.get("fileurl", "")
+            doc_prefix = str(
+                uuid.uuid5(uuid.NAMESPACE_DNS, f"{base_course}::{base_filename}::{base_fileurl}")
+            )
+
             chunk_ids = []
             for idx, split in enumerate(splits):
-                filename = split.metadata.get("filename", "")
-                course_name = split.metadata.get("course_name", "")
+                filename = split.metadata.get("filename", base_filename)
+                course_name = split.metadata.get("course_name", base_course)
                 page_num = split.metadata.get("page", 1)
-                start_idx = split.metadata.get("start_index", idx)
 
-                # Gắn ngữ cảnh ngắn gọn vào đầu chunk nếu chunk chưa có tiêu đề rõ ràng
                 header_ctx = f"[Tài liệu: {filename} | Trang {page_num}]"
                 if course_name:
                     header_ctx = f"[Môn: {course_name} | Tài liệu: {filename} | Trang {page_num}]"
-                
-                if not split.page_content.startswith("[Môn:") and not split.page_content.startswith("[Tài liệu:"):
+
+                if not split.page_content.startswith("[Môn:") and not split.page_content.startswith(
+                    "[Tài liệu:"
+                ):
                     split.page_content = f"{header_ctx}\n{split.page_content}"
 
-                # Tạo ID cố định (UUID5) theo file + trang + vị trí chunk để chống trùng lặp khi re-index
-                unique_key = f"{course_name}_{filename}_p{page_num}_i{start_idx}_{idx}"
-                deterministic_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, unique_key))
-                chunk_ids.append(deterministic_id)
+                chunk_ids.append(f"{doc_prefix}#{idx}")
 
-            print(f"Split into {len(splits)} contextualized chunks for indexing.")
+            logger.info("Split into %d contextualized chunks (prefix=%s).", len(splits), doc_prefix)
 
-            # --- BƯỚC 4: UPSERT VÀO PINECONE ---
-            print("Adding to Pinecone...")
-            vector_store = self._get_pinecone_store()
-            await vector_store.aadd_documents(documents=splits, ids=chunk_ids)
-            print("Pinecone add done.")
-
-            # --- BƯỚC 5: UPSERT VÀO ELASTICSEARCH ---
-            if self.es_client:
-                print("Adding to Elasticsearch...")
+            # Kiểm tra kết nối Elasticsearch trước khi ghi để tránh lệch pha 2 kho
+            use_es = False
+            if self.es_client is not None:
                 if not await self.es_client.ping():
-                    print("Cannot ping Elasticsearch!")
+                    logger.error("Cannot ping Elasticsearch! Aborting index to avoid dual-store desync.")
                     return False
-
                 await self._create_es_index_if_not_exists()
+                use_es = True
 
-                actions = []
-                for split, doc_id in zip(splits, chunk_ids):
-                    action = {
-                        "_op_type": "index",  # Ghi đè nếu _id đã tồn tại
+            # --- BƯỚC 4: XÓA CHUNK CŨ CỦA FILE NÀY TRƯỚC KHI UPSERT ---
+            await self._purge_existing_file_chunks(doc_prefix, use_es)
+
+            # --- BƯỚC 5: UPSERT ĐỒNG THỜI VÀO PINECONE & ELASTICSEARCH ---
+            vector_store = self._get_pinecone_store()
+            upsert_tasks = [vector_store.aadd_documents(documents=splits, ids=chunk_ids)]
+
+            if use_es and self.es_client is not None:
+                actions = [
+                    {
+                        "_op_type": "index",
                         "_index": ES_INDEX_NAME,
                         "_id": doc_id,
                         "_source": {
                             "text": split.page_content,
-                            "metadata": split.metadata
-                        }
+                            "metadata": split.metadata,
+                        },
                     }
-                    actions.append(action)
-
-                success_count, failed = await helpers.async_bulk(
-                    self.es_client, actions, raise_on_error=False
+                    for split, doc_id in zip(splits, chunk_ids)
+                ]
+                upsert_tasks.append(
+                    helpers.async_bulk(self.es_client, actions, raise_on_error=False)
                 )
-                print(f"Elasticsearch add result: {success_count} docs indexed, {len(failed)} failed.")
 
-            print("------------------------------------ Ending processing file ------------------------------------")
+            results = await asyncio.gather(*upsert_tasks, return_exceptions=True)
+
+            pinecone_res = results[0]
+            if isinstance(pinecone_res, Exception):
+                logger.error("Pinecone upsert failed: %s", pinecone_res)
+                return False
+
+            if use_es:
+                es_res = results[1]
+                if isinstance(es_res, Exception):
+                    logger.error("Elasticsearch bulk index failed: %s", es_res)
+                    return False
+                success_count, failed = es_res
+                logger.info(
+                    "Elasticsearch add result: %d docs indexed, %d failed.",
+                    success_count,
+                    len(failed),
+                )
+                if failed:
+                    return False
+
             return True
 
         except Exception as e:
-            print(f"Lỗi khi xử lý file: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.exception("Lỗi khi xử lý file %s: %s", file_path, e)
             return False
+
+    def _build_pinecone_search_kwargs(
+        self,
+        k_search: int,
+        metadata_filters: dict | None,
+        strict_filter: bool,
+    ) -> dict:
+        search_kwargs: dict = {"k": k_search}
+        if not metadata_filters:
+            return search_kwargs
+
+        pinecone_filter = {
+            k: v
+            for k, v in metadata_filters.items()
+            if v is not None and (strict_filter or k != "course_name")
+        }
+        if pinecone_filter:
+            search_kwargs["filter"] = pinecone_filter
+        return search_kwargs
 
     async def search_with_rerank(
         self,
@@ -363,110 +469,106 @@ class VectorDatabase:
         k_return: int,
         k_search: int,
         threshold: float,
-        metadata_filters: dict = None
+        metadata_filters: dict | None = None,
+        strict_filter: bool = False,
     ) -> list[Document]:
         """
         Tìm kiếm Hybrid (Pinecone + Elasticsearch) kết hợp Max-Pooling Cross-Encoder Rerank.
         """
         try:
-            print(f"-------------- START SEARCHING: '{query}' --------------")
+            logger.info("START SEARCHING: '%s' (strict_filter=%s)", query, strict_filter)
             target_course = metadata_filters.get("course_name") if metadata_filters else None
-            if target_course:
-                print(f"Applying soft course boost for: {target_course}")
 
             # --- BƯỚC 1: RETRIEVAL (Thu thập ứng viên) ---
             vector_store = self._get_pinecone_store()
-            pinecone_retriever = vector_store.as_retriever(search_kwargs={"k": k_search})
+            pinecone_retriever = vector_store.as_retriever(
+                search_kwargs=self._build_pinecone_search_kwargs(
+                    k_search, metadata_filters, strict_filter
+                )
+            )
 
-            if self.es_client and await self.es_client.ping():
+            if self.es_client is not None and await self.es_client.ping():
                 es_retriever = ElasticsearchBM25Retriever(
                     client=self.es_client,
                     index_name=ES_INDEX_NAME,
                     k=k_search,
-                    target_course=target_course
+                    target_course=target_course,
+                    metadata_filters=metadata_filters,
+                    strict_filter=strict_filter,
                 )
-                print("Using Hybrid Search (Pinecone + Custom Elasticsearch BM25)")
                 ensemble_retriever = EnsembleRetriever(
                     retrievers=[pinecone_retriever, es_retriever],
-                    weights=[0.5, 0.5]
+                    weights=[0.5, 0.5],
                 )
                 candidate_docs = await ensemble_retriever.ainvoke(query)
             else:
-                print("Elasticsearch not available. Using Pinecone only.")
+                logger.info("Elasticsearch not available. Using Pinecone only.")
                 candidate_docs = await pinecone_retriever.ainvoke(query)
 
             if not candidate_docs:
                 return []
 
             # --- BƯỚC 2: KHỬ TRÙNG LẶP ---
-            unique_docs = {}
+            unique_docs: dict[str, Document] = {}
             for doc in candidate_docs:
                 if doc.page_content not in unique_docs:
                     unique_docs[doc.page_content] = doc
 
             deduplicated_docs = list(unique_docs.values())
             num_docs = len(deduplicated_docs)
-            print(f"Reranking {num_docs} unique candidate documents...")
 
             # --- BƯỚC 3: MỞ RỘNG TỪ ĐỒNG NGHĨA & RERANK BẰNG MAX-POOLING ---
-            queries_list = self._expand_query_with_synonyms(query, max_Expansion=4)
-            print(f"Expanded into {len(queries_list)} query variants: {queries_list}")
-
+            queries_list = self._expand_query_with_synonyms(query, max_expansion=4)
             doc_contents = [doc.page_content for doc in deduplicated_docs]
 
-            # Gom toàn bộ cặp (query_variant, doc_content) để chạy batch 1 lần duy nhất
-            all_pairs = []
-            for q_var in queries_list:
-                for content in doc_contents:
-                    all_pairs.append([q_var, content])
+            all_pairs = [
+                [q_var, content]
+                for q_var in queries_list
+                for content in doc_contents
+            ]
 
-            # Chạy CrossEncoder trên thread riêng để không làm treo Event Loop của FastAPI
+            # CrossEncoder đã áp dụng nn.Sigmoid() -> trả về xác suất [0, 1]
             raw_scores = await asyncio.to_thread(self.rerank_model.predict, all_pairs)
-            raw_scores = np.array(raw_scores).reshape(len(queries_list), num_docs)
+            score_matrix = np.asarray(raw_scores, dtype=np.float64).reshape(
+                len(queries_list), num_docs
+            )
+            max_scores = np.max(score_matrix, axis=0)
 
-            # Max-Pooling: Điểm của mỗi Document là điểm cao nhất mà nó đạt được trước các biến thể câu hỏi
-            max_raw_scores = np.max(raw_scores, axis=0)
-
-            # --- BƯỚC 4: SIGMOID NORMALIZATION & SOFT BOOSTING ---
-            sigmoid_scores = 1 / (1 + np.exp(-max_raw_scores))
-
+            # --- BƯỚC 4: SOFT COURSE BOOSTING (chỉ khi không strict_filter) ---
             BONUS_SCORE = 0.15
             adjusted_scores = []
-            for doc, score in zip(deduplicated_docs, sigmoid_scores):
+            for doc, score in zip(deduplicated_docs, max_scores):
+                final_score = float(score)
                 doc_course = doc.metadata.get("course_name")
-                if target_course and doc_course == target_course:
-                    score = min(1.0, float(score) + BONUS_SCORE)
-                adjusted_scores.append(float(score))
+                if not strict_filter and target_course and doc_course == target_course:
+                    final_score = min(1.0, final_score + BONUS_SCORE)
+                adjusted_scores.append(final_score)
 
-            scored_docs = list(zip(deduplicated_docs, adjusted_scores))
-            sorted_docs = sorted(scored_docs, key=lambda x: x[1], reverse=True)
+            scored_docs = sorted(
+                zip(deduplicated_docs, adjusted_scores),
+                key=lambda x: x[1],
+                reverse=True,
+            )
 
             # --- BƯỚC 5: LỌC THEO THRESHOLD VÀ TRẢ VỀ KẾT QUẢ ---
             final_docs = []
-            for i, (doc, score) in enumerate(sorted_docs):
-                filename = doc.metadata.get("filename", "Unknown")
-                page = doc.metadata.get("page", 0)
-                start_index = doc.metadata.get("start_index", 0)
-
+            for doc, score in scored_docs:
                 if score < threshold:
-                    print(f"{i+1}. File {filename}, page {page}, start_index {start_index}, score {score:.4f} | Skipped from here (< {threshold})")
                     break
-
-                print(f"{i+1}. File {filename}, page {page}, start_index {start_index}, score {score:.4f} | Accepted")
-                # Lưu kèm điểm rerank vào metadata để tiện debug hoặc hiển thị độ tin cậy
                 doc.metadata["rerank_score"] = round(score, 4)
                 final_docs.append(doc)
-
                 if len(final_docs) >= k_return:
                     break
 
-            print(f"-------------- FINISH RERANKING (threshold: {threshold}, total retrieved: {len(final_docs)}) --------------")
+            logger.info(
+                "FINISH RERANKING (threshold=%.2f, total_retrieved=%d)",
+                threshold,
+                len(final_docs),
+            )
             return final_docs
 
         except Exception as e:
-            print(f"Có lỗi khi thực hiện search_with_rerank: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.exception("Có lỗi khi thực hiện search_with_rerank: %s", e)
             return []
 
 
@@ -476,7 +578,7 @@ class VectorDatabaseSingleton:
     @staticmethod
     def get() -> VectorDatabase:
         if VectorDatabaseSingleton._instance is None:
-            print("Khởi tạo VectorDatabase lần đầu tiên...")
+            logger.info("Khởi tạo VectorDatabase lần đầu tiên...")
             VectorDatabaseSingleton._instance = VectorDatabase()
 
         return VectorDatabaseSingleton._instance

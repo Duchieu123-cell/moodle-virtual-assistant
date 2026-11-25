@@ -75,7 +75,7 @@ def _normalize_web_results(raw_results: list[dict], max_results: int) -> list[di
         if not clean_url:
             continue
 
-        dedup_key = clean_url.rstrip("/").split("#")[0].lower()
+        dedup_key = clean_url.split("#")[0].rstrip("/").lower()
         if dedup_key in seen_urls:
             continue
 
@@ -118,25 +118,29 @@ class RagService:
         print(f"--- Refined Query: {refined_query} ---")
         print(f"--- Translated Refined Query: {translated_refined_query} ---")
 
-        # 1. Gọi hàm search với rerank (kết quả đã được lọc theo threshold bên vectorDB)
-        # Tham số k là số lượng tối đa, nếu threshold lọc bớt thì có thể trả về ít hơn
-        retrieved_docs_for_refined = await RagService.vector_db.search_with_rerank(
-            query=refined_query,
-            k_return=3,
-            k_search=15,
-            threshold=0.8,
+        # 1. Gọi song song search_with_rerank cho câu gốc đã tinh chỉnh và bản dịch song ngữ
+        retrieved_docs_for_refined, retrieved_docs_for_translated_refined = await asyncio.gather(
+            RagService.vector_db.search_with_rerank(
+                query=refined_query,
+                k_return=3,
+                k_search=15,
+                threshold=0.8,
+            ),
+            RagService.vector_db.search_with_rerank(
+                query=translated_refined_query,
+                k_return=3,
+                k_search=15,
+                threshold=0.8,
+            ),
         )
 
-        retrieved_docs_for_translated_refined = await RagService.vector_db.search_with_rerank(
-            query=translated_refined_query,
-            k_return=3,
-            k_search=15,
-            threshold=0.8,
-        )
-
+        # Khử trùng lặp theo nội dung khi gộp kết quả từ 2 truy vấn song ngữ
+        seen_contents = set()
         retrieved_docs = []
-        retrieved_docs.extend(retrieved_docs_for_refined)
-        retrieved_docs.extend(retrieved_docs_for_translated_refined)
+        for doc in (*retrieved_docs_for_refined, *retrieved_docs_for_translated_refined):
+            if doc.page_content not in seen_contents:
+                seen_contents.add(doc.page_content)
+                retrieved_docs.append(doc)
 
         # 2. Kiểm tra danh sách rỗng (Empty List Check)
         # Trường hợp này xảy ra khi không có doc nào vượt qua ngưỡng threshold

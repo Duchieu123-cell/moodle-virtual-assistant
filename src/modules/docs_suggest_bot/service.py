@@ -69,7 +69,8 @@ class DocsSuggestService():
                     threshold=0.85,
                     metadata_filters={
                         "course_name": quiz.course_name
-                    }
+                    },
+                    strict_filter=True,
                 )
                 
                 # fallback khi retrieved_docs is None hoặc len(retrieved_docs) == 0

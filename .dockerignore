@@ -6,3 +6,4 @@ tests/
 .agents/
 AGENTS.md
 .gitignore
+mychatbot/

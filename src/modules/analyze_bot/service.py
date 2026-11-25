@@ -30,8 +30,11 @@ class AnalyzeService():
                 "course_name": input.course_name,
                 "overall_statistics": input.model_dump_json(indent=2, exclude={"course_name"}), 
             })
-        except Exception:
-            raise InternalServerError("Lỗi xảy ra khi phân tích tiến trình khóa học. Vui lòng thử lại sau.")
+        except Exception as e:
+            raise InternalServerError(
+                message=str(e),
+                type="analyze_course_error"
+            )
             
         print("-"*100)
         print("ANALYZE COURSE RESPONSE:\n", response)
@@ -57,8 +60,11 @@ class AnalyzeService():
                 "course_type": input.course_type,
                 "progress_data": input.model_dump_json(indent=2, exclude={"course_name"}),
             })
-        except Exception:
-            raise InternalServerError("Lỗi xảy ra khi phân tích tiến trình sinh viên. Vui lòng thử lại sau.")
+        except Exception as e:
+            raise InternalServerError(
+                message=str(e),
+                type="analyze_student_error"
+            )
         
         print("-"*100)
         print("ANALYZE STUDENT RESPONSE:\n", response)

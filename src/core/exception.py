@@ -1,11 +1,15 @@
-class CustomException(Exception):
+class AppException(Exception):
     status_code: int
-    error_code: str
     
-    def __init__(self, message: str):
-        self.message = message
+    def __init__(self, message: str = "An error occurred", type: str = "app_exception"):
+        self.detail = {
+            "type": type,
+            "message": message
+        }
         super().__init__(message)
 
-class InternalServerError(CustomException):
+class InternalServerError(AppException):
     status_code = 500
-    error_code = "INTERNAL_SERVER_ERROR"
+
+class NotFoundError(AppException):
+    status_code = 404

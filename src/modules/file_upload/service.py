@@ -12,7 +12,7 @@ class FileUploadService():
     async def upload_file(file, mimetype, fileurl, course_name):
         try:
             # 1. Lưu file tạm thời
-            temp_dir = "file_vector_db"
+            temp_dir = "files/file_vector_db"
             os.makedirs(temp_dir, exist_ok=True)
             unique_name = f"{uuid.uuid4()}_{file.filename}"
             temp_file_path = f"{temp_dir}/{unique_name}"

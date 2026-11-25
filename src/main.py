@@ -5,7 +5,7 @@ from src.modules.file_upload.router import router as file_upload_router
 from src.modules.quiz_gen_bot.router import router as quiz_gen_router
 from src.modules.reminder_bot.router import router as reminder_router
 from src.modules.status_check.router import router as status_check_router
-from src.core.exception import CustomException
+from src.core.exception import AppException
 from starlette.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -24,14 +24,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.exception_handler(CustomException)
-async def custom_exception_handler(request: Request, exc: CustomException):
+@app.exception_handler(AppException)
+async def custom_exception_handler(request: Request, exc: AppException):
     return JSONResponse(
         status_code=exc.status_code,
-        content={
-            "error_code": exc.error_code,
-            "message": exc.message
-        }
+        content=exc.detail
     )
 
 app.include_router(analyze_router)

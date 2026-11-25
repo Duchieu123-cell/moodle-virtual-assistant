@@ -135,7 +135,7 @@ class QuizGenService():
             context = None
             if file:
                 # 1. Lưu file tạm thời
-                temp_dir = "file_quiz_gen"
+                temp_dir = "files/file_quiz_gen"
                 os.makedirs(temp_dir, exist_ok=True)
                 unique_name = f"{uuid.uuid4()}_{file.filename}"
                 temp_file_path = f"{temp_dir}/{unique_name}"

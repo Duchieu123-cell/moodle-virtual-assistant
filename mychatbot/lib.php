@@ -157,10 +157,7 @@ function local_mychatbot_before_footer() {
                                             <i class="icon fa-solid fa-message"></i>
                                             <p>Chat mới</p>
                                         </button>
-                                        <button class="chat-action-item btn btn-light border-0 student-action d-none" data-action="settings">
-                                            <i class="icon fa-solid fa-gear text-primary"></i>
-                                            <p>Cài đặt</p>
-                                        </button>
+
                                         <button class="chat-action-item btn btn-light border-0 position-relative student-action d-none" data-action="quiz_reminder">
                                             <i class="icon fa-solid fa-list-check text-info"></i>
                                             <p>Nhắc nhở Quiz</p>
@@ -173,6 +170,7 @@ function local_mychatbot_before_footer() {
                                             <div id="assignment-badge" class="notification-badge bg-danger d-none">
                                             </div>
                                         </button>
+
                                         <button class="chat-action-item btn btn-light border-0 teacher-action d-none" data-action="course_progress">
                                             <i class="icon fa-solid fa-chart-line text-info"></i>
                                             <p>Tiến độ khóa học</p>
@@ -181,6 +179,7 @@ function local_mychatbot_before_footer() {
                                             <i class="icon fa-solid fa-wand-magic-sparkles text-warning"></i>
                                             <p>Tạo câu hỏi Quiz</p>
                                         </button>
+
                                     </div>
                                 </div>
                                 <button id="send-btn" class="btn btn-secondary btn-icon-circle" title="Gửi tin nhắn">
@@ -190,47 +189,6 @@ function local_mychatbot_before_footer() {
                         </div>
                     </div>
 
-                    <div id="chatbot-settings-modal" class="d-none">
-                        <div id="settings-header" class="d-flex justify-content-between align-items-center px-2">
-                            <h3 class="text-dark m-0">Chatbot settings</h3>
-                            <button id="settings-close-btn" class="btn border-0" title="Đóng"><h3>&times;</h3></button>
-                        </div>
-                        <div id="settings-layout" class="row m-0">
-                            <div id="settings-nav" class="col-4 pt-2">
-                                <button class="btn rounded-pill settings-nav-item active" data-target="reminder-settings" title="Nhắc nhở">Nhắc nhở</button>
-                            </div>
-                            <div id="settings-content" class="col-8 pt-2">
-                                <div id="reminder-settings" class="settings-pane">
-                                    <h4>Nhắc nhở hàng ngày</h4>
-                                    <p>Thông báo nhắc nhở tổng hợp mỗi ngày qua email.</p>
-                                    <div class="setting-item">
-                                        <span>Nhận nhắc nhở</span>
-                                        <label class="toggle-switch">
-                                            <input type="checkbox" id="daily-reminder-toggle">
-                                            <span class="slider round"></span>
-                                        </label>
-                                    </div>
-                                    <div class="setting-item-time">
-                                        <p>Chọn giờ nhận:</p>
-                                        <div class="row justify-content-between time-radio-group">
-                                            <div class="col-xl-3 col-6 d-flex justify-content-center mb-2">
-                                                <label><input type="radio" name="reminder_time" value="8">08:00</label>
-                                            </div>
-                                            <div class="col-xl-3 col-6 d-flex justify-content-center mb-2">
-                                                <label><input type="radio" name="reminder_time" value="13">13:00</label>
-                                            </div>
-                                            <div class="col-xl-3 col-6 d-flex justify-content-center mb-2">
-                                                <label><input type="radio" name="reminder_time" value="18">18:00</label>
-                                            </div>
-                                            <div class="col-xl-3 col-6 d-flex justify-content-center mb-2">
-                                                <label><input type="radio" name="reminder_time" value="21">21:00</label>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
                 </div>';
         $PAGE->requires->js_call_amd('local_mychatbot/chatbot', 'init', []);
         $PAGE->requires->js_call_amd('local_mychatbot/chatbot', 'injectIcon', []);

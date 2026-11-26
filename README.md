@@ -78,7 +78,7 @@ Thay vì phụ thuộc vào một cơ sở dữ liệu duy nhất, module `src/m
      - **`vi_index_analyzer`**: Dùng `tokenizer: "vi_tokenizer"` kết hợp filter `lowercase` để tách từ ghép tiếng Việt chính xác khi lập chỉ mục.
      - **`vi_search_analyzer`**: Dùng `tokenizer: "vi_tokenizer"` kết hợp `lowercase` và `my_synonym_graph` (`synonym_graph`, `expand: True`) nạp từ danh sách từ đồng nghĩa chuyên ngành Anh–Việt trong `src/modules/vector_database/synonyms.py`.
      - **Custom `ElasticsearchBM25Retriever`**: Truy vấn `bool` với `must.match` trên trường `text`, hỗ trợ lọc cứng (`strict_filter=True`) hoặc `should.match_phrase` trên `metadata.course_name` (`boost: 2.0`) để ưu tiên tài liệu đúng môn học, tự động cô lập lỗi nếu index chưa tồn tại.
-   - *Lưu ý*: Node Elasticsearch cần cài đặt plugin tiếng Việt hỗ trợ `vi_tokenizer` (nếu Elasticsearch không khả dụng hoặc chưa có index, hệ thống vẫn tiếp tục trả về kết quả từ Pinecone).
+   - *Lưu ý*: Node **Elasticsearch 9.3.0** cần cài đặt plugin `elasticsearch-analysis-vietnamese-9.3.0` (`duydo`) cung cấp tokenizer `vi_tokenizer` (nếu Elasticsearch không khả dụng hoặc chưa có index, hệ thống vẫn tiếp tục trả về kết quả từ Pinecone).
 3. **Hợp nhất & Xếp hạng lại (Fusion & Reranking)**:
    - Kết hợp ứng viên từ Pinecone và Elasticsearch qua `EnsembleRetriever` (`weights=[0.5, 0.5]`), sau đó khử trùng lặp theo nội dung.
    - Mở rộng truy vấn theo từ đồng nghĩa dạng round-robin (`_expand_query_with_synonyms`, giới hạn `max_expansion=4` để tránh nghẽn CPU).
@@ -153,7 +153,7 @@ Moodle_VirtualAssistant_BE/
 
 ### 1. Yêu cầu môi trường
 - **Python 3.12**
-- **Elasticsearch** đang chạy và có cài đặt plugin phân tích tiếng Việt hỗ trợ tokenizer `vi_tokenizer`
+- **Elasticsearch 9.3.0** đang chạy và đã cài đặt plugin `elasticsearch-analysis-vietnamese-9.3.0` (`duydo`) cung cấp tokenizer `vi_tokenizer`
 - Tài khoản **Pinecone** (API Key) và **Groq** (API Key)
 
 ### 2. Cấu hình biến môi trường

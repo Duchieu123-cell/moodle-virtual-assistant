@@ -1,105 +1,22 @@
 define(['jquery', 'core/ajax', 'core/notification'], function($, ajax, notification) {
-    var chatbotContainer        = null;
-    var chatWindow              = null;
-    var chatInput               = null;
-    var sendButton              = null;
-    var closeButton             = null;
-    var chatbotIcon             = null;
-    var chatActionsButton       = null;
-    var chatActionsMenu         = null;
-    var sidebar                 = null;
-    var sidebarEmpty            = null;
-    var sidebarContent          = null;
-    var sidebarToggleBtn        = null;
-    var isCheckingStatus        = false;
-    var currentConversationId   = 0;
-    var settingsModal           = null;
-    var settingsModalCloseBtn   = null;
-    var dailyReminderToggle     = null;
-    var settingsNavItems        = null;
-    var settingsPanes           = null;
-    var dailyReminderTimeGroup  = null; // div.time-radio-group
-    var dailyReminderTimeRadios = null; // input[name="reminder_time"]
-    var NoConversation          = true;
+    var chatbotContainer = null;
+    var chatWindow = null;
+    var chatInput = null;
+    var sendButton = null;
+    var closeButton = null;
+    var chatbotIcon = null;
+    var chatActionsButton = null;
+    var chatActionsMenu = null;
+    var sidebar = null;
+    var sidebarEmpty = null;
+    var sidebarContent = null;
+    var sidebarToggleBtn = null;
+    var isCheckingStatus = false;
+    var currentConversationId = 0;
+    var NoConversation = true;
     // BIẾN NÀY ĐỂ QUẢN LÝ TRẠNG THÁI INPUT
-    var inputMode               = 'chat'; // Giá trị có thể là 'chat' hoặc 'quiz'
-    /**
-     * Mở modal Cài đặt và tải dữ liệu
-     */
-    function openSettingsModal() {
-        if (!settingsModal) {
-            return;
-        }
-        settingsModal.removeClass('d-none');
-        loadDailyReminderSetting();
-    }
-    /**
-     * Tải cài đặt nhắc nhở từ server
-     */
-    function loadDailyReminderSetting() {
-        if (!dailyReminderToggle) {
-            return;
-        }
-        ajax.call([{
-            methodname: 'local_mychatbot_get_reminder_setting',
-            args: {},
-            done: function(data) {
-                // Đặt trạng thái cho nút toggle
-                dailyReminderToggle.prop('checked', data.status == 1);
-                dailyReminderTimeRadios.prop('checked', false); // Reset
-                // Chọn radio tương ứng
-                var radio = dailyReminderTimeRadios.filter('[value="' + data.remindertime + '"]');
-                if (radio.length) {
-                    radio.prop('checked', true);
-                }
-                else {
-                    // Mặc định 21 nếu dữ liệu lạ
-                    dailyReminderTimeRadios.filter('[value="21"]').prop('checked', true);
-                }
-                // Bật/tắt radio group dựa trên toggle
-                dailyReminderTimeGroup.toggleClass('disabled', data.status != 1);
-                dailyReminderTimeRadios.prop('disabled', data.status != 1);
-            },
-            fail: function(ex) {
-                notification.exception(ex);
-                showSystemMessage(`Lỗi tải cài đặt nhắc nhở: (${ex.message})`, "status-error");
-            }
-        }]);
-    }
-    /**
-     * Gửi cài đặt nhắc nhở mới lên server
-     */
-    function saveDailyReminderSetting() {
-        if (!dailyReminderToggle || !dailyReminderTimeRadios) {
-            return;
-        }
-        // 1. Lấy cả hai giá trị
-        var status = dailyReminderToggle.prop('checked') ? 1 : 0;
-        var time = dailyReminderTimeRadios.filter(':checked').val();
-        // 2. Bật/tắt UI
-        dailyReminderTimeGroup.toggleClass('disabled', status != 1);
-        dailyReminderTimeRadios.prop('disabled', status != 1);
+    var inputMode = 'chat'; // Giá trị có thể là 'chat' hoặc 'quiz'
 
-        // 3. Gọi API
-        ajax.call([{
-            methodname: 'local_mychatbot_set_reminder_setting',
-            args: {
-                status: status,
-                remindertime: parseInt(time, 10)
-            },
-            done: function(data) {
-                if (data.success) {
-                    notification.addNotification({ message: 'Đã lưu cài đặt', type: 'success' });
-                }
-            },
-            fail: function(ex) {
-                notification.exception(ex);
-                showSystemMessage(`Lỗi lưu cài đặt nhắc nhở: (${ex.message})`, "status-error");
-                // Hoàn lại thao tác nếu lỗi
-                loadDailyReminderSetting(); // Tải lại trạng thái cũ từ server
-            }
-        }]);
-    }
     /**
      * Định dạng một Unix timestamp (tính bằng giây)
      * thành chuỗi ngày giờ (ví dụ: "Wed, Dec 4, 8:06 PM")
@@ -2187,7 +2104,7 @@ define(['jquery', 'core/ajax', 'core/notification'], function($, ajax, notificat
     /**
      * Hàm thực hiện gọi AJAX để lưu danh sách câu hỏi đã lọc
      * @param {Array} selectedQuestions - Mảng các câu hỏi đã được người dùng chọn để lưu
-     * @param {Number} request_id - ID của yêu cầu tạo quiz nhằm mục đích tracking để cập nhật cột saved của yêu cầu đó trong db
+     * @param {number} request_id - ID của yêu cầu tạo quiz nhằm mục đích tracking để cập nhật cột saved của yêu cầu đó trong db
      * @param {Object} saveBtn - Đối tượng jQuery của nút "Lưu vào ngân hàng câu hỏi"
      * @param {Object} checkboxes - Đối tượng jQuery của các checkbox câu hỏi, dùng để vô hiệu hóa sau khi lưu thành công
      */
@@ -2237,24 +2154,17 @@ define(['jquery', 'core/ajax', 'core/notification'], function($, ajax, notificat
      */
     var init = function() {
         $(document).ready(function() {
-            chatbotContainer        = $('#chatbot-container');
-            chatWindow              = $('#chat-window');
-            chatInput               = $('#chat-input');
-            sendButton              = $('#send-btn');
-            closeButton             = $('#chatbot-close-btn');
-            chatActionsButton       = $('#chat-actions-btn');
-            chatActionsMenu         = $('#chat-actions-menu');
-            sidebar                 = $('#chatbot-sidebar');
-            sidebarEmpty            = $('#sidebar-empty');
-            sidebarContent          = $('#sidebar-content');
-            sidebarToggleBtn        = $('#sidebar-toggle-btn');
-            settingsModal           = $('#chatbot-settings-modal');
-            settingsModalCloseBtn   = $('#settings-close-btn');
-            dailyReminderToggle     = $('#daily-reminder-toggle');
-            settingsNavItems        = $('.settings-nav-item');
-            settingsPanes           = $('.settings-pane');
-            dailyReminderTimeGroup  = $('.time-radio-group');
-            dailyReminderTimeRadios = $('input[name="reminder_time"]');
+            chatbotContainer = $('#chatbot-container');
+            chatWindow = $('#chat-window');
+            chatInput = $('#chat-input');
+            sendButton = $('#send-btn');
+            closeButton = $('#chatbot-close-btn');
+            chatActionsButton = $('#chat-actions-btn');
+            chatActionsMenu = $('#chat-actions-menu');
+            sidebar= $('#chatbot-sidebar');
+            sidebarEmpty = $('#sidebar-empty');
+            sidebarContent = $('#sidebar-content');
+            sidebarToggleBtn = $('#sidebar-toggle-btn');
             if (
                 !chatbotContainer.length ||
                 !chatWindow.length ||
@@ -2266,14 +2176,7 @@ define(['jquery', 'core/ajax', 'core/notification'], function($, ajax, notificat
                 !sidebar.length ||
                 !sidebarEmpty.length ||
                 !sidebarContent.length ||
-                !sidebarToggleBtn.length ||
-                !settingsModal.length ||
-                !settingsModalCloseBtn.length ||
-                !dailyReminderToggle.length ||
-                !settingsNavItems.length ||
-                !settingsPanes.length ||
-                !dailyReminderTimeGroup.length ||
-                !dailyReminderTimeRadios.length
+                !sidebarToggleBtn.length
             ) {
                 return;
             }
@@ -2369,9 +2272,6 @@ define(['jquery', 'core/ajax', 'core/notification'], function($, ajax, notificat
                         case 'new_chat':
                             handleNewChat();
                             break;
-                        case 'settings':
-                            openSettingsModal();
-                            break;
                         case 'quiz_reminder':
                             handleQuizReminderClick();
                             break;
@@ -2388,33 +2288,6 @@ define(['jquery', 'core/ajax', 'core/notification'], function($, ajax, notificat
                     chatActionsMenu.addClass('d-none'); // Đóng menu
                 });
             }
-            // Nút đóng settings modal
-            settingsModalCloseBtn.off('click').on('click', function() {
-                settingsModal.addClass('d-none');
-            });
-
-            // Nút Bật/Tắt cho đăng ký nhận nhắc nhở hàng ngày (daily reminder register)
-            dailyReminderToggle.off('change').on('change', function() {
-                saveDailyReminderSetting();
-            });
-            dailyReminderTimeRadios.off('change').on('change', function() {
-                saveDailyReminderSetting();
-            });
-
-            // Chuyển tab trong Cài đặt
-            settingsNavItems.off('click').on('click', function() {
-                var thisEle = $(this);
-                if (thisEle.is(':disabled')) {
-                    return;
-                }
-                var targetId = thisEle.data('target');
-                // Bỏ active
-                settingsNavItems.removeClass('active');
-                settingsPanes.addClass('d-none');
-                // Thêm active
-                thisEle.addClass('active');
-                $('#' + targetId).removeClass('d-none');
-            });
 
             // Bắt sự kiện click vào tên học viên trên Tooltip của biểu đồ
             chatWindow.off('click', '.student-detail-link').on('click', '.student-detail-link', function(e) {

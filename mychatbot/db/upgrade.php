@@ -10,7 +10,7 @@ defined('MOODLE_INTERNAL') || die();
 function xmldb_local_mychatbot_upgrade($oldversion): bool {
     global $DB;
     $dbman = $DB->get_manager();
-    $newversion = 2026050902; // Cập nhật phiên bản mới nhất
+    $newversion = 2026112601; // Cập nhật phiên bản mới nhất
 
     if ($oldversion < $newversion) {
 
@@ -18,7 +18,6 @@ function xmldb_local_mychatbot_upgrade($oldversion): bool {
         $table_02 = new xmldb_table('local_mychatbot_conversation_history');
         $table_03 = new xmldb_table('local_mychatbot_rag_file_references');
         $table_04 = new xmldb_table('local_mychatbot_rag_web_references');
-        $table_05 = new xmldb_table('local_mychatbot_daily_reminder_register');
         $table_06 = new xmldb_table('local_mychatbot_quiz_reminder_bandit_arms');
         $table_07 = new xmldb_table('local_mychatbot_quiz_reminders');
         $table_08 = new xmldb_table('local_mychatbot_quiz_reminder_logs');
@@ -46,9 +45,6 @@ function xmldb_local_mychatbot_upgrade($oldversion): bool {
         }
         if ($dbman->table_exists($table_04)) {
             $dbman->drop_table($table_04);
-        }
-        if ($dbman->table_exists($table_05)) {
-            $dbman->drop_table($table_05);
         }
         if ($dbman->table_exists($table_06)) {
             $dbman->drop_table($table_06);
@@ -143,18 +139,6 @@ function xmldb_local_mychatbot_upgrade($oldversion): bool {
             $dbman->create_table($table);
         }
 
-        $table = new xmldb_table('local_mychatbot_daily_reminder_register');
-        $table->add_field('id', XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, XMLDB_SEQUENCE, null);
-        $table->add_field('userid', XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, null, null);
-        $table->add_field('registered', XMLDB_TYPE_INTEGER, '1', null, XMLDB_NOTNULL, null, '1');
-        $table->add_field('remindertime', XMLDB_TYPE_INTEGER, '2', null, XMLDB_NOTNULL, null, '21');
-        $table->add_key('primary', XMLDB_KEY_PRIMARY, ['id']);
-        $table->add_key('userid_key', XMLDB_KEY_FOREIGN_UNIQUE, ['userid'], 'user', ['id']);
-
-        if (!$dbman->table_exists($table)) {
-            $dbman->create_table($table);
-        }
-
         $table = new xmldb_table('local_mychatbot_quiz_reminder_bandit_arms');
         $table->add_field('id', XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, XMLDB_SEQUENCE, null);
         $table->add_field('userid', XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, null, null);
@@ -169,11 +153,6 @@ function xmldb_local_mychatbot_upgrade($oldversion): bool {
 
         $users = $DB->get_records('user', ['deleted' => 0]);
         foreach ($users as $user) {
-            $record = new \stdClass();
-            $record->userid = $user->id;
-            $record->registered = 1;
-            $record->remindertime = 21;
-            $DB->insert_record('local_mychatbot_daily_reminder_register', $record);
 
             for ($armid = 1; $armid <= 5; $armid++) {
                 $record_arm = new \stdClass();

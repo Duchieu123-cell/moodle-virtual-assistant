@@ -281,6 +281,7 @@ class VectorDatabase:
                 },
                 mappings={
                     "properties": {
+                        "doc_prefix": {"type": "keyword"},
                         "text": {
                             "type": "text",
                             "analyzer": "vi_index_analyzer",
@@ -305,15 +306,42 @@ class VectorDatabase:
             if id_batch:
                 self._pinecone_index.delete(ids=list(id_batch))
 
-    async def _purge_existing_file_chunks(self, doc_prefix: str, use_es: bool):
+    async def _purge_existing_file_chunks(
+        self,
+        doc_prefix: str,
+        use_es: bool,
+        filename: str = "",
+        fileurl: str = "",
+    ):
         """Xóa các chunk cũ của cùng tài liệu trước khi re-index để tránh dữ liệu mồ côi."""
         tasks = [asyncio.to_thread(self._purge_pinecone_prefix_sync, doc_prefix)]
         if use_es and self.es_client is not None:
             if await self.es_client.indices.exists(index=ES_INDEX_NAME):
+                # Elasticsearch không cho phép dùng prefix query trực tiếp trên trường hệ thống _id
+                should_clauses: list[dict] = [{"match_phrase": {"doc_prefix": doc_prefix}}]
+                if fileurl and filename:
+                    should_clauses.append(
+                        {
+                            "bool": {
+                                "must": [
+                                    {"match_phrase": {"metadata.fileurl": fileurl}},
+                                    {"match_phrase": {"metadata.filename": filename}},
+                                ]
+                            }
+                        }
+                    )
+                elif fileurl:
+                    should_clauses.append({"match_phrase": {"metadata.fileurl": fileurl}})
+                else:
+                    should_clauses.append(
+                        {"ids": {"values": [f"{doc_prefix}#{i}" for i in range(200)]}}
+                    )
+
                 tasks.append(
                     self.es_client.delete_by_query(
                         index=ES_INDEX_NAME,
-                        query={"prefix": {"_id": f"{doc_prefix}#"}},
+                        query={"bool": {"should": should_clauses, "minimum_should_match": 1}},
+                        conflicts="proceed",
                         refresh=True,
                     )
                 )
@@ -394,7 +422,9 @@ class VectorDatabase:
                 use_es = True
 
             # --- BƯỚC 4: XÓA CHUNK CŨ CỦA FILE NÀY TRƯỚC KHI UPSERT ---
-            await self._purge_existing_file_chunks(doc_prefix, use_es)
+            await self._purge_existing_file_chunks(
+                doc_prefix, use_es, filename=base_filename, fileurl=base_fileurl
+            )
 
             # --- BƯỚC 5: UPSERT ĐỒNG THỜI VÀO PINECONE & ELASTICSEARCH ---
             vector_store = self._get_pinecone_store()
@@ -407,6 +437,7 @@ class VectorDatabase:
                         "_index": ES_INDEX_NAME,
                         "_id": doc_id,
                         "_source": {
+                            "doc_prefix": doc_prefix,
                             "text": split.page_content,
                             "metadata": split.metadata,
                         },

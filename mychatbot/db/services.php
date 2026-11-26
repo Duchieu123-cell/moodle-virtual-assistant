@@ -32,22 +32,6 @@ $functions = [
         'ajax'         => true,
         'capabilities' => 'local/mychatbot:use'
     ],
-    // Lấy cài đặt nhắc nhở hàng ngày
-    'local_mychatbot_get_reminder_setting' => [
-        'classname'    => '\local_mychatbot\external\get_reminder_setting',
-        'description'  => 'Get the user setting for daily reminders.',
-        'type'         => 'write',
-        'ajax'         => true,
-        'capabilities' => 'local/mychatbot:use',
-    ],
-    // Cập nhật cài đặt nhắc nhở hàng ngày
-    'local_mychatbot_set_reminder_setting' => [
-        'classname'    => '\local_mychatbot\external\set_reminder_setting',
-        'description'  => 'Set the user setting for daily reminders.',
-        'type'         => 'write',
-        'ajax'         => true,
-        'capabilities' => 'local/mychatbot:use',
-    ],
     'local_mychatbot_get_quiz_reminder_history' => [
         'classname'    => '\local_mychatbot\external\get_quiz_reminder_history',
         'description'  => 'Get quiz reminders, triggering new pull if cooldown passed.',

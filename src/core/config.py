@@ -4,9 +4,10 @@ from functools import lru_cache
 class Settings(BaseSettings):
     PINECONE_API_KEY: str
     GROQ_API_KEY: str
-    ES_URL: str
-    PROJECT_NAME: str
     TAVILY_API_KEY: str | None = None
+    ES_URL: str | None = None
+    PROJECT_NAME: str = "moodle-virtual-assistant"
+    
     
     model_config = SettingsConfigDict(
         env_file=".env",

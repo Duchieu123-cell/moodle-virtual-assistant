@@ -157,7 +157,7 @@ Moodle_VirtualAssistant_BE/
 - Tài khoản **Pinecone** (API Key) và **Groq** (API Key)
 
 ### 2. Cấu hình biến môi trường
-Tạo file `.env` ở thư mục gốc của dự án (tham khảo cấu hình trong `src/core/config.py`):
+Tạo file `.env` ở thư mục gốc của dự án (tham khảo cấu hình trong `src/core/config.py` hoặc `.env.example`):
 
 ```env
 PINECONE_API_KEY=your_pinecone_api_key

@@ -5,15 +5,20 @@ from src.modules.quiz_gen_bot.prompt import (
 )
 from src.modules.quiz_gen_bot.schemas import GeneratedQuiz
 from src.modules.file_processor.service import FileProcessService
+from src.core.exception import (
+    UnprocessableContentError,
+    InternalServerError
+)
 from src.core.config import settings
 from langchain_groq import ChatGroq
 import asyncio
 import os
-from fastapi import HTTPException, status
 import shutil
 import uuid
+import logging
 
 GROQ_API_KEY = settings.GROQ_API_KEY 
+logger = logging.getLogger(__name__)
 
 class QuizGenService():
 
@@ -59,7 +64,7 @@ class QuizGenService():
             return []
             
         except Exception as e:
-            print(f"Error generating {level_key} questions: {str(e)}")
+            logger.exception("Failed to generate %s questions", level_key)
             return []
 
     @staticmethod
@@ -81,16 +86,14 @@ class QuizGenService():
         # 3. Gộp kết quả từ 3 luồng
         all_questions = []
         for q_list in results:
-            print("-"*50)
-            print(f"Generated {len(q_list)} questions for one level.")
-            print(q_list)
-            print("-"*50)
+            logger.info("Generated %d questions for one level", len(q_list))
+            logger.debug("Questions: %s", str(q_list))
             all_questions.extend(q_list)
             
         # 4. Trả về format cuối cùng
         final_quiz = GeneratedQuiz(questions=all_questions)
         
-        print(f"Generated {len(all_questions)} questions total.")
+        logger.info("Generated %d questions total", len(all_questions))
         return final_quiz.model_dump()
     
         # format kết quả cho ChatGroq.with_structured_output
@@ -168,18 +171,17 @@ class QuizGenService():
             )
             # Kiểm tra kết quả
             if not response or not response.get("questions"):
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, 
-                    detail="Mô hình không thể tạo ra câu hỏi từ nội dung/yêu cầu được cung cấp."
+                logger.error("Quiz generation returned empty or invalid response")
+                raise UnprocessableContentError(
+                    message="Quiz generation returned empty or invalid response",
+                    type="quiz_generate_error",
                 )
 
             return response
 
-        except HTTPException as http_ex:
-            raise http_ex
         except Exception as e:
-            print(f"Lỗi trong quá trình tạo quiz: {e}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
-                detail=f"Lỗi trong quá trình tạo quiz: {e}"
+            logger.exception("Failed to generate quiz: %s", str(e))
+            raise InternalServerError(
+                message="Failed to generate quiz",
+                type="quiz_generate_error",
             )

@@ -8,8 +8,10 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_groq import ChatGroq
 from src.core.config import settings
 import json
+import logging
 
 GROQ_API_KEY = settings.GROQ_API_KEY
+logger = logging.getLogger(__name__)
 
 class DocsSuggestService():
     vector_db = VectorDatabaseSingleton.get()
@@ -75,7 +77,7 @@ class DocsSuggestService():
                 
                 # fallback khi retrieved_docs is None hoặc len(retrieved_docs) == 0
                 if not retrieved_docs or len(retrieved_docs) == 0:
-                    print(f"LOG: No documents for question: {question.question_content}")
+                    logger.info(f"No documents for question: %s", question.question_content)
                     continue
 
                 # Tạo chuỗi question_answers để đưa vào prompt AI
@@ -104,12 +106,10 @@ class DocsSuggestService():
                     chunk_number_as_key = f"chunk {int(doc.metadata.get('start_index'))}"
                     fileinfos_for_prompt[filename][page_number_as_key][chunk_number_as_key] = doc.page_content
 
+            logger.info("File infos for prompt:\n%s", fileinfos_for_prompt)
+            logger.info("File infos for return:\n%s", fileinfos_for_return)
+
             # Sau khi đã duyệt tất cả câu hỏi của quiz đang xét, gọi AI để lấy nội dung gợi ý cho quiz đó
-            print("----- fileinfos_for_prompt -----")
-            print(fileinfos_for_prompt)
-            print("----- fileinfos_for_return -----")
-            print(fileinfos_for_return)
-            print('--------------------------------')
             fileinfos_for_prompt_json = json.dumps(fileinfos_for_prompt, indent=4)
             docs_suggestion = await DocsSuggestService.get_docs_suggestion(quiz, question_answers, fileinfos_for_prompt_json)
             docs_data.append({

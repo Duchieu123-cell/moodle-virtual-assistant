@@ -4,9 +4,10 @@ import base64
 import io
 from PIL import Image
 from src.core.config import settings
-from src.core.exception import InternalServerError
+import logging
 
 GROQ_API_KEY = settings.GROQ_API_KEY
+logger = logging.getLogger(__name__)
 
 # Prompt tối ưu riêng cho Slide bài giảng & Giáo trình phục vụ RAG
 SYSTEM_PROMPT = """Bạn là chuyên gia phân tích tài liệu kỹ thuật và học thuật cho hệ thống RAG.
@@ -74,5 +75,5 @@ class VisionProcessService:
             return content
             
         except Exception as e:
-            print(f"Lỗi khi xử lý hình ảnh bằng Vision LLM: {e}")
+            logger.exception("Vision model failed to describe image: %s", str(e))
             return "error"

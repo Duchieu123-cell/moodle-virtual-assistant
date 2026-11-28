@@ -17,8 +17,10 @@ from src.core.config import settings
 from datetime import datetime, timedelta
 import numpy as np
 from src.core.exception import InternalServerError
+import logging
 
 GROQ_API_KEY = settings.GROQ_API_KEY
+logger = logging.getLogger(__name__)
 
 def convert_time_vn(time_str: str):
     dt = datetime.strptime(time_str, "%Y-%m-%d %H:%M:%S")
@@ -107,9 +109,7 @@ class AssignReminderService():
             recommend_format = assign_format.recommend_format_4
             
         input = "\n".join(full)
-        print("--------------------------------------------------------------------------------------------------------------")
-        print("input:\n", input)
-        print("--------------------------------------------------------------------------------------------------------------")
+        logger.debug("assignment reminder input:\n%s", input)
         
         try:
             chain = (
@@ -131,9 +131,8 @@ class AssignReminderService():
         except Exception as e:
             raise InternalServerError(f"Lỗi xảy ra khi chatbot tạo nhắc nhở assignment: {str(e)}")
         
-        print("--------------------------------------------------------------------------------------------------------------")
-        print("create_assignment_reminder:\n", reminder)
-        print("--------------------------------------------------------------------------------------------------------------")
+        logger.debug("Assignment reminder:\n%s", reminder)
+        
         return {
             "response": reminder,
             "allowed_submission_assignments": allowed_submission_assignments,
@@ -145,11 +144,8 @@ class AssignReminderService():
     async def check_assignment(request: AssignReminderRequestItem):
         assignments = []
         for course in request.reminder_data:
-            print("--------------------------------------------------------------------------------------------------------------")
-            print("Processing Course:")
-            print(course)
-            print("--------------------------------------------------------------------------------------------------------------")
-
+            logger.info("Processing Course: %s", course.course_name)
+            
             for assignment in course.assignments_pending:
                 assignment = {
                     "assignment_name": assignment.assignment_name,
@@ -160,9 +156,11 @@ class AssignReminderService():
                 }
                 
                 assignments.append(assignment)
+                
+            logger.info("Done processing course: %s, total assignments found: %d", course.course_name, len(course.assignments_pending))
 
         if len(assignments) == 0:
-            print(f"User {request.user_id}: No assignments available.")
+            logger.info("User %d has no assignments available", request.user_id)
             return "No assignments available.", [], []
 
         assignments.sort(key=lambda a: (a["assignment_duedate"], a["assignment_allowsubmissionsfromdate"]))
@@ -370,10 +368,7 @@ class QuizReminderService():
                     else:
                         suggestion_title = "Một số thời gian đề xuất cho bạn thực hiện:"
                         
-        print("--------------------------------------------------------------------------------------------------------------")
-        print("suggestion title:", suggestion_title)
-        print("suggestion_list:", suggestion_list)
-        print("--------------------------------------------------------------------------------------------------------------")
+        logger.debug("Selected quizzes for reminder: %s", suggestion_list)
         
         if red:
             if red_mul:
@@ -397,9 +392,7 @@ class QuizReminderService():
             recommend_format = quiz_format.recommend_format_8 if white_mul else ""
             
         input = "\n".join(full)
-        print("--------------------------------------------------------------------------------------------------------------")
-        print("input:\n", input)
-        print("--------------------------------------------------------------------------------------------------------------")
+        logger.debug("input:\n%s", input)
         
         try:
             chain = (
@@ -421,10 +414,8 @@ class QuizReminderService():
         except Exception as e:
             raise InternalServerError(f"Lỗi xảy ra khi chatbot tạo nhắc nhở quiz: {str(e)}")
         
-        print("--------------------------------------------------------------------------------------------------------------")
-        print("create_quiz_reminder:\n", reminder)
-        print("--------------------------------------------------------------------------------------------------------------")
-
+        logger.debug("Quiz reminder:\n%s", reminder)
+        
         if red:
             doc_needed_quizid = list_quizzes[0]['quiz_id']
         else:
@@ -496,16 +487,13 @@ class QuizReminderService():
     async def check_quiz(request: QuizReminderRequestItem):
         # === BƯỚC 1: CHỌN CHIẾN LƯỢC (ARM) ===
         chosen_arm_id, chosen_strategy = QuizReminderService.choose_best_arm(request.arms_state)
-        print(f"User {request.user_id}: Chosen Arm ID: {chosen_arm_id}, Strategy: {chosen_strategy}")
+        logger.info("User %d: Chosen Arm ID: %d, Strategy: %s", request.user_id, chosen_arm_id, chosen_strategy)
 
         # === BƯỚC 2: TÍNH TOÁN QUIZ ===
         quizzes = []
         for course in request.reminder_data:
-            print("--------------------------------------------------------------------------------------------------------------")
-            print("Processing Course:")
-            print(course)
-            print("--------------------------------------------------------------------------------------------------------------")
-    
+            logger.info("Processing Course: %s", course.course_name)
+            
             for quiz in course.quizzes:
                 quiz_priority, severity_level = QuizReminderService.compute_quiz_priority(
                     quiz.quiz_timeclose,
@@ -527,7 +515,7 @@ class QuizReminderService():
                 })
 
         if len(quizzes) == 0:
-            print(f"User {request.user_id}: No quizzes available.")
+            logger.info("User %d has no quizzes available", request.user_id)
             return {
                 "response"            : "No quizzes available.",
                 "formatted_quizzes"   : [],

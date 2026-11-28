@@ -10,7 +10,9 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_groq import ChatGroq
 from src.core.config import settings
 from src.core.exception import InternalServerError
+import logging
 
+logger = logging.getLogger(__name__)
 
 class AnalyzeService():
 
@@ -31,17 +33,16 @@ class AnalyzeService():
                 "overall_statistics": input.model_dump_json(indent=2, exclude={"course_name"}), 
             })
         except Exception as e:
+            logger.exception("Failed to analyze course %s", input.course_name)
             raise InternalServerError(
-                message=str(e),
+                message=f"Failed to analyze course {input.course_name}",
                 type="analyze_course_error"
             )
             
-        print("-"*100)
-        print("ANALYZE COURSE RESPONSE:\n", response)
-        print("-"*100)
-        return {
-            "response": response
-        }
+
+        logger.info("Finished analyzing course %s", input.course_name)
+        
+        return { "response": response }
     
     @staticmethod
     async def analyze_student(input: AnalyzeStudentRequest):
@@ -61,14 +62,12 @@ class AnalyzeService():
                 "progress_data": input.model_dump_json(indent=2, exclude={"course_name"}),
             })
         except Exception as e:
+            logger.exception("Failed to analyze student %s in course %s", input.student_name, input.course_name)
             raise InternalServerError(
-                message=str(e),
+                message=f"Failed to analyze student {input.student_name} in course {input.course_name}",
                 type="analyze_student_error"
             )
         
-        print("-"*100)
-        print("ANALYZE STUDENT RESPONSE:\n", response)
-        print("-"*100)
-        return {
-            "response": response
-        }
+        logger.info("Finished analyzing student %s in course %s", input.student_name, input.course_name)
+
+        return { "response": response }

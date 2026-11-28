@@ -6,6 +6,9 @@ import unicodedata
 import pymupdf
 import io
 import re
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 # Chỉ giữ lại các tiêu đề thực sự đặc trưng cho trang mục lục / tài liệu tham khảo độc lập
@@ -67,7 +70,7 @@ class FileProcessService():
         headers_footers = {line for line, count in line_counts.items() if count >= threshold}
 
         if headers_footers:
-            print(f"Detected Headers/Footers patterns to remove: {headers_footers}")
+            logger.info("Detected Headers/Footers patterns to remove: %s", headers_footers)
         return headers_footers
 
     @staticmethod
@@ -148,7 +151,7 @@ class FileProcessService():
                             table_rects.append(pymupdf.Rect(tab.bbox))
                             md_tables.append(f"[Bảng dữ liệu {i + 1}]\n{md_str.strip()}")
         except Exception as e:
-            print(f"Warning: Table extraction failed on page {page.number + 1}: {e}")
+            logger.exception("Table extraction failed on page %d: %s", page.number + 1, str(e))
 
         # 2. Nếu không có bảng, lấy text toàn trang như bình thường
         if not table_rects:
@@ -244,13 +247,13 @@ class FileProcessService():
         # Nếu trang có hình ảnh/sơ đồ lớn, KHÔNG đánh dấu là trang rác dù ít chữ
         min_text_len = 25 if is_slide else 40
         if len(text) < min_text_len and not has_meaningful_visuals:
-            print(f"Garbage page detected at page {page_num}. Cause: len(text) < {min_text_len} and no visuals.")
+            logger.info("Garbage page detected at page %d. Cause: len(text) < %d and no visuals.", page_num, min_text_len)
             return True
 
         # Kiểm tra dấu chấm mục lục (". . . . 15" hoặc "..... 15")
         dot_leader_lines = re.findall(r'(\.\s*){4,}\d+', text)
         if len(dot_leader_lines) >= 4:
-            print(f"Garbage page detected at page {page_num}. Cause: TOC dot leaders.")
+            logger.info("Garbage page detected at page %d. Cause: TOC dot leaders.", page_num)
             return True
 
         # Kiểm tra tiêu đề trang Mục lục / Tài liệu tham khảo dựa trên 3 dòng đầu tiên của trang
@@ -258,7 +261,7 @@ class FileProcessService():
         first_lines = "\n".join(text_lower.split('\n')[:3])
         if page_num < 14 or page_num > total_pages - 6:
             if any(re.search(rf'\b{re.escape(kw)}\b', first_lines) for kw in GARBAGE_PAGE_TITLES):
-                print(f"Garbage page detected at page {page_num}. Cause: Garbage title keyword in header.")
+                logger.info("Garbage page detected at page %d. Cause: Garbage title keyword in header.", page_num)
                 return True
 
         return False
@@ -272,7 +275,7 @@ class FileProcessService():
         try:
             with pymupdf.open(file_path) as pdf_document:
                 total_pages = len(pdf_document)
-                print(f"--- Processing PDF: {file_path} ({total_pages} pages) ---")
+                logger.info("Start processing PDF: %s (%d pages) ---", file_path, total_pages)
 
                 headers_footers_blacklist = FileProcessService._find_repetitive_headers_footers(pdf_document)
                 total_pages_with_visuals = 0
@@ -287,7 +290,7 @@ class FileProcessService():
                     # Chỉ bỏ qua trang bìa (page_num == 0) nếu đây là Giáo trình khổ dọc dài (> 15 trang)
                     # Giữ lại trang 1 nếu là Slide bài giảng hoặc tài liệu ngắn vì thường chứa tên chủ đề chính
                     if page_num == 0 and (not is_slide) and total_pages > 15:
-                        print("Page 1: Skipped cover page of long textbook.")
+                        logger.info("Page 1: Skipped cover page of long textbook.")
                         continue
 
                     # 1. Trích xuất văn bản sạch và bảng biểu Markdown
@@ -299,19 +302,19 @@ class FileProcessService():
                     has_visuals = FileProcessService._has_meaningful_visuals(page, table_rects)
 
                     if not text and not has_visuals:
-                        print(f"Page {page_num + 1}: Empty text and no meaningful visuals -> Skip.")
+                        logger.info("Page %d: Empty text and no meaningful visuals -> Skip.", page_num + 1)
                         continue
 
                     # 3. Lọc trang rác (Mục lục, Tài liệu tham khảo,...)
                     if FileProcessService._is_garbage_page(
                         text, page_num + 1, total_pages, is_slide, has_visuals
                     ):
-                        print(f"Page {page_num + 1}: Identified as garbage page -> Skip.")
+                        logger.info("Page %d: Identified as garbage page -> Skip.", page_num + 1)
                         continue
 
                     # 4. Xử lý hình ảnh / sơ đồ bằng Vision LLM
                     if has_visuals and not visual_content_error:
-                        print(f"Page {page_num + 1}: Meaningful visual content detected. Calling Vision LLM...")
+                        logger.info("Page %d: Meaningful visual content detected. Calling Vision LLM...", page_num + 1)
                         total_pages_with_visuals += 1
 
                         # Render trang ở độ phân giải 2x để đọc rõ chữ nhỏ trong sơ đồ
@@ -323,17 +326,17 @@ class FileProcessService():
                             description = await VisionProcessService.describe_image(image)
 
                         if description == "error":
-                            print(f"Page {page_num + 1}: Vision LLM encountered an error -> Skip Vision step for remaining pages.")
+                            logger.error("Page %d: Vision LLM encountered an error -> Skip Vision step for remaining pages.", page_num + 1)
                             visual_content_error = True
                         elif description:
-                            print(f"Page {page_num + 1}: Vision LLM extracted useful visual context.")
+                            logger.info("Page %d: Vision LLM extracted useful visual context.", page_num + 1)
                             text = f"{text}\n\n[Nội dung phân tích từ Hình ảnh/Sơ đồ]\n{description}".strip()
                         else:
-                            print(f"Page {page_num + 1}: Visual content is decorative only (SKIP_IMAGE) -> Ignored.")
+                            logger.info("Page %d: Visual content is decorative only (SKIP_IMAGE) -> Ignored.", page_num + 1)
 
                     # Kiểm tra độ dài tối thiểu lần cuối sau khi đã gộp cả Text + Table + Vision
                     if len(text) < 20:
-                        print(f"Page {page_num + 1}: Final content too short (< 20 chars) -> Skip.")
+                        logger.info("Page %d: Final content too short (< 20 chars) -> Skip.", page_num + 1)
                         continue
 
                     # 5. Đóng gói LangChain Document
@@ -348,13 +351,11 @@ class FileProcessService():
                     )
                     docs.append(doc)
 
-                print(f"--- Finished PDF: {len(docs)}/{total_pages} valid pages extracted (Vision LLM calls: {total_pages_with_visuals}) ---")
+                logger.info("Finished PDF: %d/%d valid pages extracted (Vision LLM calls: %d)", len(docs), total_pages, total_pages_with_visuals)
                 return docs
 
         except Exception as e:
-            print(f"Error processing PDF {file_path}: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.exception("Error processing PDF file %s: %s", file_path, str(e))
             return []
 
     @staticmethod

@@ -1,5 +1,6 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
+from typing import Literal
 
 class Settings(BaseSettings):
     PINECONE_API_KEY: str
@@ -7,6 +8,7 @@ class Settings(BaseSettings):
     TAVILY_API_KEY: str | None = None
     ES_URL: str | None = None
     PROJECT_NAME: str = "moodle-virtual-assistant"
+    LOG_LEVEL: Literal["DEBUG", "INFO", "WARNING"] = "INFO"
     
     
     model_config = SettingsConfigDict(

@@ -7,7 +7,9 @@ from src.modules.chat_bot.schemas import Message
 from src.modules.chat_bot.query_bot.service import QueryService
 from src.modules.chat_bot.talk_bot.service import TalkService
 from src.modules.chat_bot.rag_bot.service import RagService
+import logging
 
+logger = logging.getLogger(__name__)
 
 class ChatService():
     intent_classifier = IntentClassifierSingleton.get()
@@ -17,11 +19,9 @@ class ChatService():
         user_msg = data.message
     
         # 1. Phân loại Intent bằng Machine Learning (Nhanh & Chính xác)
-        print("-"*60)
-        print(f"Analyzing intent for: '{user_msg}'")
-        role = ChatService.intent_classifier.predict(user_msg)
-        print(f"DETECTED ROLE: {role}")
-        print("-"*60)
+        logger.info("Start to classify intent for '%s'", user_msg)
+        role: int = ChatService.intent_classifier.predict(user_msg)
+        logger.info("Detected role for '%s': %d", user_msg, role)
         # 2. Định tuyến (Routing)
         
         if role == 1:

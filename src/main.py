@@ -1,9 +1,12 @@
+from src.core.config import settings
+from src.core.logging_config import setup_logging
+
+setup_logging()
+
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from starlette.middleware.cors import CORSMiddleware
-
-from src.core.config import settings
 from src.core.exception import AppException
 from src.modules.analyze_bot.router import router as analyze_router
 from src.modules.chat_bot.router import router as chat_router

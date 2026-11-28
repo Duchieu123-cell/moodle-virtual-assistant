@@ -15,12 +15,15 @@ from src.modules.chat_bot.rag_bot.prompt import (
     PROMPT_RAG,
 )
 from src.modules.chat_bot.rag_bot.query_refiner import QueryRefiner
-from src.modules.chat_bot.rag_bot.schemas import ChosenDocuments
+from src.modules.chat_bot.rag_bot.schemas import ChosenDocuments, Doc
 from src.modules.chat_bot.schemas import (
     ChatTurn,
     format_chat_history,
 )
 from src.modules.vector_database.vector_db import VectorDatabaseSingleton
+import logging
+
+logger = logging.getLogger(__name__)
 
 GROQ_API_KEY = settings.GROQ_API_KEY
 
@@ -111,12 +114,13 @@ class RagService:
         Tìm kiếm tài liệu và format thành context.
         Trả về (None, [], refined_query) nếu không tìm thấy tài liệu phù hợp.
         """
-        print(f"--- RAG Retrieval Start: '{message}' ---")
+        logger.info("Start RAG retrieval for message: '%s'", message)
         # Lọc nhiễu & Trích xuất trọng tâm cho cả query trước khi search để tăng hiệu quả tìm kiếm
         refined_query = await QueryRefiner.refine(message)
+        logger.info("Refined query: '%s'", refined_query)
+        
         translated_refined_query = await QueryRefiner.translate(refined_query)
-        print(f"--- Refined Query: {refined_query} ---")
-        print(f"--- Translated Refined Query: {translated_refined_query} ---")
+        logger.info("Translated refined query: '%s'", translated_refined_query)
 
         # 1. Gọi song song search_with_rerank cho câu gốc đã tinh chỉnh và bản dịch song ngữ
         retrieved_docs_for_refined, retrieved_docs_for_translated_refined = await asyncio.gather(
@@ -145,7 +149,7 @@ class RagService:
         # 2. Kiểm tra danh sách rỗng (Empty List Check)
         # Trường hợp này xảy ra khi không có doc nào vượt qua ngưỡng threshold
         if not retrieved_docs:
-            print("No documents passed the relevance threshold.")
+            logger.info("No documents passed the relevance threshold")
             return None, [], refined_query
 
         context = ""
@@ -163,13 +167,13 @@ class RagService:
                 groq_api_key=GROQ_API_KEY,
             ).with_structured_output(ChosenDocuments, method="json_mode")
         )
-        response = await chain.ainvoke({"input": message, "documents": context})
-        chosen_ids = response.list_ids if response and response.list_ids else []
+        response: ChosenDocuments = await chain.ainvoke({"input": message, "documents": context})
+        chosen_ids: list[Doc] = response.list_ids if response and response.list_ids else []
         if not chosen_ids:
-            print("No documents were chosen by the LLM.")
+            logger.info("No documents were chosen by the LLM")
             return None, [], refined_query
 
-        print(f"Chosen document IDs: {chosen_ids}")
+        logger.info("Chosen document IDs: %s", chosen_ids)
 
         # 2.2. Lọc lại retrieved_docs chỉ giữ những doc có ID trong chosen_ids
         retrieved_docs = [
@@ -178,9 +182,10 @@ class RagService:
 
         # Trường hợp này xảy ra khi không có doc nào lọc ra sau bước chọn lọc bằng prompt
         if not retrieved_docs:
-            print("No documents passed the relevance threshold.")
+            logger.info("No documents passed the relevance threshold")
             return None, [], refined_query
 
+        logger.info("Retrieved %d documents after filtering by chosen IDs", len(retrieved_docs))
         # 3. Xử lý tài liệu để tạo context trả về
         context = ""
         fileinfos = []
@@ -204,10 +209,8 @@ class RagService:
             if fileinfo not in fileinfos:
                 fileinfos.append(fileinfo)
 
-        print("-" * 60)
-        print(f"CONTEXT FOUND ({len(retrieved_docs)} docs):\n{context}...")
-        print("-" * 60)
-
+        logger.debug("Final context for RAG:\n%s", context)
+        
         return context, fileinfos, refined_query
 
     @staticmethod
@@ -319,19 +322,19 @@ class RagService:
 
         if settings.TAVILY_API_KEY:
             try:
-                print(f"LOG: Triggering Tavily Async Search for: '{clean_query}'...")
+                logger.info("Triggering Tavily Async Search for: '%s'", clean_query)
                 tavily_results = await RagService._tavily_search(clean_query, max_results)
                 if tavily_results:
                     return tavily_results
-                print("LOG: Tavily returned no qualified results. Falling back to DDGS...")
+                logger.info("Tavily returned no qualified results. Falling back to DDGS...")
             except Exception as e:
-                print(f"Tavily search error: {e}. Falling back to DDGS...")
+                logger.exception("Tavily search error: %s. Falling back to DDGS...", str(e))
 
         try:
-            print(f"LOG: Triggering Async DDGS Fallback Search for: '{clean_query}'...")
+            logger.info("Triggering Async DDGS Fallback Search for: '%s'", clean_query)
             return await RagService._ddgs_fallback_search(clean_query, max_results)
         except Exception as e:
-            print(f"Web search error: {e}")
+            logger.exception("DDGS fallback search error: %s", str(e))
             return []
 
     @staticmethod
@@ -342,7 +345,7 @@ class RagService:
 
         # 2. Xử lý trường hợp context rỗng -> Fallback sang Web Search
         if not context:
-            print("Current knowledge base is empty for this query. Falling back to Web Search...")
+            logger.info("Current knowledge base is empty for this query. Falling back to Web Search...")
 
             search_keyword = await QueryRefiner.rewrite_for_web(
                 message,
@@ -350,9 +353,10 @@ class RagService:
                 fallback_query=refined_query,
             )
             web_results = await RagService.web_search_fallback(search_keyword)
+            logger.info("Web search results: %d", len(web_results))
 
             if not web_results:
-                print("Web search không cho kết quả.")
+                logger.info("Web search returned no results. Returning default response.")
                 return {
                     "response": "<p>Xin lỗi, tôi không tìm thấy thông tin trong cơ sở dữ liệu và cả trên Internet để trả lời bạn.</p>",
                     "fileinfos": [],
@@ -373,9 +377,9 @@ class RagService:
                     seen_urls.add(url)
                     websearchinfos.append({"title": title, "url": url})
 
-            print("-" * 60)
-            print(f"WEB CONTEXT FOUND ({len(web_results)} results):\n{context}...")
-            print("-" * 60)
+            
+            logger.info("Web search context prepared with %d sources", len(websearchinfos))
+            logger.debug("Web search context:\n%s", context)
 
         # 3. Nếu có Context (từ Local DB hoặc Web), gọi LLM sinh câu trả lời
         try:
@@ -395,10 +399,9 @@ class RagService:
                     "input": message,
                 }
             )
-
-            print("-" * 60)
-            print("Rag response:\n", response)
-            print("-" * 60)
+            
+            logger.info("RAG response generated successfully")
+            logger.debug("RAG response:\n%s", response)
 
             return {
                 "response": response,
@@ -408,7 +411,7 @@ class RagService:
             }
 
         except Exception as e:
-            print(f"Error occurred while calling LLM: {e}")
+            logger.exception("Failed to generate RAG response: %s", str(e))
             return {
                 "response": "<p>Xin lỗi, hệ thống đang gặp sự cố khi xử lý câu trả lời. Vui lòng thử lại sau.</p>",
                 "fileinfos": [],

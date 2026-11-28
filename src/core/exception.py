@@ -13,3 +13,6 @@ class InternalServerError(AppException):
 
 class NotFoundError(AppException):
     status_code = 404
+    
+class UnprocessableContentError(AppException):
+    status_code = 422
